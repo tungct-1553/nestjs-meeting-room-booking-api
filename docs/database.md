@@ -1,24 +1,37 @@
-# Database design
+# Database
 
-**Trạng thái:** thiết kế làm cơ sở triển khai, chưa tạo migration. Mở [database.drawio](database.drawio) bằng draw.io để chỉnh sửa.
+PostgreSQL lưu users, rooms và bookings. [ERD](database.drawio) mô tả entity và quan hệ; migration SQL trong `src/database/migrations` định nghĩa schema.
 
-## Entities
+## Schema
 
-| Bảng | Trường chính | Quan hệ và ràng buộc |
+| Bảng | Trường | Ràng buộc |
 |---|---|---|
-| `users` | `id` UUID PK, `keycloak_sub` text UNIQUE, `email` text nullable, `display_name` text nullable, timestamps | Một user có nhiều booking; không lưu password hay role nguồn của Keycloak |
-| `rooms` | `id` UUID PK, `name` text UNIQUE, `capacity` integer, `description` text nullable, `is_active` boolean, timestamps | `capacity > 0`; ngừng hoạt động thay cho xóa cứng |
-| `bookings` | `id` UUID PK, `room_id` UUID FK, `user_id` UUID FK, `title` text, `start_at`/`end_at` timestamptz, `status`, timestamps | FK `RESTRICT`; status `confirmed`/`cancelled`; `start_at < end_at`; exclusion constraint cho booking confirmed |
+| `users` | `id` UUID, `keycloak_sub` text, `email`/`display_name` text nullable, timestamps | PK `id`; UNIQUE `keycloak_sub` |
+| `rooms` | `id` UUID, `name` text, `capacity` integer, `description` text nullable, `is_active` boolean, timestamps | PK `id`; UNIQUE `name`; CHECK `capacity > 0` |
+| `bookings` | `id` UUID, `room_id`/`user_id` UUID, `title` text, `start_at`/`end_at` timestamptz, `status` text, timestamps | PK `id`; FK `RESTRICT`; CHECK `start_at < end_at`; status `confirmed`/`cancelled`; exclusion constraint |
 
-Trường `id` và timestamps do ứng dụng/database tạo. Đồng bộ user theo `keycloak_sub` đã xác thực; email và display name chỉ là snapshot có thể thay đổi. Tên phòng sử dụng ràng buộc UNIQUE của PostgreSQL; so sánh phân biệt chữ hoa/thường.
+UUID mặc định là `gen_random_uuid()`. `created_at` và `updated_at` mặc định `now()`; TypeORM cập nhật `updated_at` khi adapter thực hiện update. Database không có trigger cập nhật timestamp.
 
-## Chống trùng lịch và index
+`keycloak_sub` định danh hồ sơ theo Keycloak; email/display name là snapshot nullable. Tên phòng dùng UNIQUE phân biệt chữ hoa/thường. Thời gian booking dùng `timestamptz`, response serialize ISO 8601 UTC.
 
-PostgreSQL extension `btree_gist`; exclusion constraint GiST theo `room_id WITH =` và `tstzrange(start_at, end_at, '[)') WITH &&`, điều kiện `status = 'confirmed'`. Đây là bảo vệ cho các giao dịch đồng thời; booking cancelled không nằm trong constraint. Giá trị thời gian lưu UTC bằng `timestamptz`.
+## Constraint và index
 
-Index bổ sung: `bookings(user_id, created_at, id)` cho danh sách cá nhân; index tên phòng/search sẽ chọn sau khi xem query. Không thêm index trùng với PK/UNIQUE đã tồn tại.
+- Extension `btree_gist` được cài trong schema `public` bởi migration.
+- Constraint `bookings_no_overlap`: `room_id WITH =` và `tstzrange(start_at, end_at, '[)') WITH &&`, áp dụng khi `status = 'confirmed'`.
+- Booking liền nhau không trùng lịch; booking cancelled không giữ khoảng thời gian.
+- Index `bookings_user_created_id` trên `(user_id, created_at, id)` phục vụ danh sách cá nhân.
+- Không thêm index search riêng cho phòng; UNIQUE `rooms(name)` đã có index. Index bổ sung cần kết quả đo query và migration riêng.
 
-## Tự kiểm tra
+## Migration
 
-- [x] Kiểm tra mapping với requirement, role, quan hệ và concurrency.
-- [ ] Kiểm tra migrations, index và constraints trong PostgreSQL khi triển khai.
+Migration SQL được viết tay. Cấu hình TypeORM giữ `synchronize: false`, `migrationsRun: false` và `installExtensions: false`. Chạy migration bằng CLI trước khi khởi động ứng dụng.
+
+Metadata entity phục vụ truy vấn, chưa mô tả đầy đủ FK, exclusion constraint và UUID defaults. Không sử dụng `migration:generate` khi metadata chưa đồng bộ với schema. Thay đổi migration phải được kiểm tra FK, CHECK, exclusion constraint, index và defaults bằng PostgreSQL integration tests.
+
+Revert xóa bảng và constraint theo thứ tự bookings → rooms → users; giữ extension `btree_gist` vì có thể được dùng chung.
+
+## Kết nối
+
+`DatabaseModule` khởi tạo một DataSource/pool cho tiến trình HTTP. `DatabaseLifecycle` đóng pool qua shutdown hook. File `src/database/data-source.ts` export DataSource cho TypeORM CLI; CLI quản lý initialize/destroy trong tiến trình riêng.
+
+Repository trong transaction sử dụng `EntityManager` của callback, không dùng manager mặc định hoặc tạo pool riêng. Quy tắc khóa phòng và phạm vi transaction được mô tả tại [architecture.md](architecture.md).
