@@ -10,7 +10,7 @@ Trạng thái: **đã có foundation NestJS và các adapter transaction TypeORM
 - [Kiến trúc và bảo mật](docs/architecture.md)
 - [Ví dụ phân lớp, DI và transaction](docs/implementation-patterns.md)
 - [Thiết kế database](docs/database.md) · [Sơ đồ draw.io](docs/database.drawio)
-- [Roadmap và mục tiêu học tập](docs/roadmap.md)
+- [Overview khóa học](docs/overview.md)
 
 ## Phạm vi
 
@@ -52,7 +52,7 @@ Config được validate khi bootstrap; `DATABASE_URL` bắt buộc, `PORT` mặ
 - Users đồng bộ hồ sơ qua repository port; Rooms công khai factory cung cấp thao tác khóa phòng cho transaction của Bookings.
 - Core service tạo booking và deactivate phòng dùng cùng quy tắc khóa; unit of work tạo repository theo manager của từng transaction và ánh xạ đúng lỗi constraint.
 
-Ranh giới module và nguồn chuẩn từng chủ đề được quản lý ở [architecture](docs/architecture.md). Core services hiện được gọi nội bộ, chưa có controller HTTP nghiệp vụ. Các endpoint trong requirements vẫn là contract cần hoàn thành sau khi có JWT/RBAC; danh sách, hủy booking, CRUD phòng đầy đủ, rate limiting và seeder CLI thuộc các bước tiếp theo.
+Danh mục và quy cách tài liệu tại [docs/README.md](docs/README.md). Core services hiện được gọi nội bộ, chưa có controller HTTP nghiệp vụ. Các endpoint trong requirements vẫn là contract cần hoàn thành sau khi có JWT/RBAC; danh sách, hủy booking, CRUD phòng đầy đủ, rate limiting và seeder CLI thuộc các bước tiếp theo.
 
 Handler trả một đối tượng nghiệp vụ để interceptor tạo `{ data: object }`. Handler danh sách phân trang trả `PaginatedResponse<T>` từ `src/common/types/paginated-response.ts`, ví dụ `new PaginatedResponse(rows, { page, limit, total })`, để response có đúng `{ data: rows, meta: { page, limit, total } }`. Health dùng `RawResponse`; HTTP 204 giữ body rỗng.
 
