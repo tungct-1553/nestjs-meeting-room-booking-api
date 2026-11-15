@@ -1,6 +1,6 @@
 # Database design
 
-**Trạng thái:** đề xuất để self-review và mentor review, chưa tạo migration. Mở [database.drawio](database.drawio) bằng draw.io để chỉnh sửa.
+**Trạng thái:** thiết kế làm cơ sở triển khai, chưa tạo migration. Mở [database.drawio](database.drawio) bằng draw.io để chỉnh sửa.
 
 ## Entities
 
@@ -10,7 +10,7 @@
 | `rooms` | `id` UUID PK, `name` text UNIQUE, `capacity` integer, `description` text nullable, `is_active` boolean, timestamps | `capacity > 0`; ngừng hoạt động thay cho xóa cứng |
 | `bookings` | `id` UUID PK, `room_id` UUID FK, `user_id` UUID FK, `title` text, `start_at`/`end_at` timestamptz, `status`, timestamps | FK `RESTRICT`; status `confirmed`/`cancelled`; `start_at < end_at`; exclusion constraint cho booking confirmed |
 
-Trường `id` và timestamps do ứng dụng/database tạo. Đồng bộ user theo `keycloak_sub` đã xác thực; email và display name chỉ là snapshot có thể thay đổi. Quyết định ràng buộc unique tên phòng theo chuẩn hóa chữ hoa/thường sẽ được mentor xác nhận trước migration.
+Trường `id` và timestamps do ứng dụng/database tạo. Đồng bộ user theo `keycloak_sub` đã xác thực; email và display name chỉ là snapshot có thể thay đổi. Tên phòng sử dụng ràng buộc UNIQUE của PostgreSQL; so sánh phân biệt chữ hoa/thường.
 
 ## Chống trùng lịch và index
 
@@ -18,8 +18,7 @@ PostgreSQL extension `btree_gist`; exclusion constraint GiST theo `room_id WITH 
 
 Index bổ sung: `bookings(user_id, created_at, id)` cho danh sách cá nhân; index tên phòng/search sẽ chọn sau khi xem query. Không thêm index trùng với PK/UNIQUE đã tồn tại.
 
-## Review
+## Tự kiểm tra
 
 - [x] Kiểm tra mapping với requirement, role, quan hệ và concurrency.
-- [ ] Mentor review database design và API contract.
-- [ ] Xác nhận quy tắc tên phòng trước migration.
+- [ ] Kiểm tra migrations, index và constraints trong PostgreSQL khi triển khai.

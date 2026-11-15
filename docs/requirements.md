@@ -1,13 +1,13 @@
 # Requirements và API contract
 
-**Trạng thái:** bản đề xuất để self-review và gửi mentor review. Tài liệu này thay thế tạm requirement sheet; cần đối chiếu mẫu của khóa học khi có link.
+**Trạng thái:** đặc tả làm cơ sở triển khai và tự kiểm tra. Tài liệu này thay thế tạm requirement sheet; đối chiếu mẫu của khóa học khi có link.
 
 ## Đối tượng và phạm vi
 
 - **Employee:** xem phòng, đặt phòng, xem và hủy booking của chính mình.
 - **Admin:** có quyền Employee; tạo, sửa và ngừng hoạt động phòng. Không tự động có quyền xem hoặc hủy booking của người khác trong phiên bản đầu.
 - **Keycloak:** quản lý đăng ký, đăng nhập, refresh token và role. Không tạo API NestJS riêng để nhận password hoặc phát token.
-- Ngoài phạm vi: upload ảnh, thông báo qua email, workflow duyệt booking, thanh toán, đồng bộ lịch bên ngoài và frontend. Các kỹ năng file, gửi mail và schedule có trong yêu cầu khóa học cần được xác nhận với mentor về cách thực hành riêng.
+- Ngoài phạm vi: upload ảnh, thông báo qua email, workflow duyệt booking, thanh toán, đồng bộ lịch bên ngoài và frontend. Các kỹ năng file, gửi mail và schedule được nêu riêng trong yêu cầu khóa học, chưa thuộc scope nghiệp vụ hiện tại.
 
 ## Quy tắc nghiệp vụ
 
@@ -50,4 +50,4 @@ User ID được lấy từ access token, không nhận `userId` từ client khi
 - Hai request đồng thời cho cùng phòng/khoảng thời gian chỉ tối đa một request tạo thành công.
 - Khoảng thời gian liền nhau được phép; hủy booking giải phóng khoảng thời gian.
 - Trang danh sách phân trang ổn định; API không trả thông tin nhạy cảm.
-- Mentor xác nhận scope, endpoint và quyền trước khi implement.
+- Scope, endpoint và quyền được kiểm tra nhất quán với implementation.

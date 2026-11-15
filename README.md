@@ -2,7 +2,7 @@
 
 Mock Project backend đặt phòng họp, xây dựng bằng NestJS theo kiến trúc **modular monolith**. Nhân viên có thể xem phòng, đặt và hủy lịch của mình; admin quản lý phòng. Keycloak phụ trách tài khoản và xác thực.
 
-Trạng thái: **đang đặc tả**, chưa có ứng dụng hoặc API chạy được. Tài liệu và database design cần được mentor review trước khi triển khai.
+Trạng thái: **đang đặc tả**, chưa có ứng dụng hoặc API chạy được. Project được tự kiểm tra trong quá trình thực hiện và tổng kết sau khi hoàn thành.
 
 ## Tài liệu
 
@@ -15,4 +15,4 @@ Trạng thái: **đang đặc tả**, chưa có ứng dụng hoặc API chạy �
 
 Room management, booking chống trùng lịch, RBAC, unit test và e2e test. Phiên bản đầu không có upload ảnh, notification, approval workflow, thanh toán hoặc frontend.
 
-API contract và database design là bản đề xuất, cần được mentor xác nhận trước khi viết entities/migrations.
+API contract và database design là cơ sở triển khai, được cập nhật khi có thay đổi nghiệp vụ.

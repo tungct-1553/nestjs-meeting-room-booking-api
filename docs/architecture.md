@@ -1,6 +1,6 @@
 # Kiến trúc và bảo mật
 
-**Trạng thái:** đề xuất, chờ mentor review. Kiến trúc là một deployable NestJS modular monolith, một PostgreSQL cho dữ liệu ứng dụng. Keycloak là identity provider chạy độc lập.
+**Trạng thái:** thiết kế làm cơ sở triển khai. Kiến trúc là một deployable NestJS modular monolith, một PostgreSQL cho dữ liệu ứng dụng. Keycloak là identity provider chạy độc lập.
 
 ## Modules và ranh giới
 
@@ -28,13 +28,13 @@ Client → routing/versioning → JWT/RBAC guard → DTO validation pipe → con
 
 ## Database và tính nhất quán
 
-PostgreSQL lưu users, rooms và bookings. Migration bật `btree_gist` và tạo exclusion constraint theo room UUID và khoảng `tstzrange(start_at, end_at, '[)')` cho booking `confirmed`; `CHECK start_at < end_at`. Transaction ghi booking, map exclusion violation thành 409; không dựa duy nhất vào query kiểm tra trước khi insert. Tạo room/booking và quan hệ chỉ theo database design được mentor duyệt.
+PostgreSQL lưu users, rooms và bookings. Migration bật `btree_gist` và tạo exclusion constraint theo room UUID và khoảng `tstzrange(start_at, end_at, '[)')` cho booking `confirmed`; `CHECK start_at < end_at`. Transaction ghi booking, map exclusion violation thành 409; không dựa duy nhất vào query kiểm tra trước khi insert. Tạo room/booking và quan hệ theo database design của project.
 
 Pagination có thứ tự ổn định và giới hạn; index cho lookup phòng, owner và lịch. Khi cần lấy dữ liệu liên quan dùng join hoặc batch thay vì truy vấn N+1. Unit test và PostgreSQL integration test kiểm tra query, hai request đồng thời và trạng thái bị hủy.
 
 ## Phạm vi mở rộng
 
-Phiên bản đầu không triển khai upload file, email, Bull/Redis hoặc scheduled reminder. Các kỹ năng này có trong yêu cầu khóa học; cần thống nhất với mentor cách thực hành phù hợp trước khi bổ sung vào project.
+Phiên bản đầu không triển khai upload file, email, Bull/Redis hoặc scheduled reminder. Các kỹ năng này được nêu trong yêu cầu khóa học và chưa thuộc scope nghiệp vụ hiện tại.
 
 ## Vận hành
 
