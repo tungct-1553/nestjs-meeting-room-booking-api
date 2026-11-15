@@ -1,0 +1,73 @@
+import { Controller, Get, HttpCode, INestApplication, Query } from '@nestjs/common';
+import { Test } from '@nestjs/testing';
+import request from 'supertest';
+import { DataSource } from 'typeorm';
+import { AppModule } from '../src/app.module';
+import { configureApp } from '../src/configure-app';
+import { PaginationDto } from '../src/common/dto/pagination.dto';
+import { PaginatedResponse } from '../src/common/types/paginated-response';
+import { BookingsService } from '../src/bookings/bookings.service';
+import { RoomsTransactionFactory } from '../src/rooms/infrastructure/public/rooms-transaction.factory';
+
+@Controller('probe')
+class ProbeController {
+  @Get() read(@Query() pagination: PaginationDto) { return pagination; }
+  @Get('list') list(): PaginatedResponse<{ id: string }> {
+    return new PaginatedResponse([{ id: 'room-id' }], { page: 2, limit: 20, total: 21 });
+  }
+  @Get('empty') @HttpCode(204) empty() {}
+  @Get('failure') failure() { throw new Error('sensitive-database-password'); }
+}
+
+describe('HTTP foundation and module DI', () => {
+  let app: INestApplication;
+  const source = { query: jest.fn().mockResolvedValue([{ result: 1 }]), isInitialized: true, destroy: jest.fn().mockResolvedValue(undefined) };
+  beforeAll(async () => {
+    const module = await Test.createTestingModule({ imports: [AppModule], controllers: [ProbeController] }).overrideProvider(DataSource).useValue(source).compile();
+    app = module.createNestApplication({ logger: false });
+    configureApp(app);
+    await app.init();
+  });
+  afterAll(async () => { await app.close(); });
+  it('resolves application and public factory through module imports', () => {
+    expect(app.get(BookingsService)).toBeInstanceOf(BookingsService);
+    expect(app.get(RoomsTransactionFactory)).toBeInstanceOf(RoomsTransactionFactory);
+  });
+  it('keeps health raw and assigns request IDs', async () => {
+    const response = await request(app.getHttpServer()).get('/api/v1/health').set('x-request-id', 'review-test').expect(200);
+    expect(response.body).toEqual({ status: 'ok' });
+    expect(response.headers['x-request-id']).toBe('review-test');
+  });
+  it('separates dependency readiness from liveness', async () => {
+    source.query.mockRejectedValueOnce(new Error('secret connection string'));
+    const response = await request(app.getHttpServer()).get('/api/v1/health/ready').expect(503);
+    expect(response.body.error).toEqual({ code: 'HTTP_503', message: 'Database is unavailable', details: [] });
+    await request(app.getHttpServer()).get('/api/v1/health').expect(200);
+  });
+  it('transforms and validates query DTOs and wraps success once', async () => {
+    const response = await request(app.getHttpServer()).get('/api/v1/probe?page=2&limit=10').expect(200);
+    expect(response.body).toEqual({ data: { page: 2, limit: 10 } });
+    const invalid = await request(app.getHttpServer()).get('/api/v1/probe?limit=101&userId=untrusted').expect(400);
+    expect(invalid.body.error.details.length).toBeGreaterThan(0);
+  });
+  it('retains 204 semantics and sanitizes unexpected errors', async () => {
+    expect((await request(app.getHttpServer()).get('/api/v1/probe/empty').expect(204)).text).toBe('');
+    const response = await request(app.getHttpServer()).get('/api/v1/probe/failure').expect(500);
+    expect(JSON.stringify(response.body)).not.toContain('sensitive');
+  });
+  it('serializes an explicit paginated response without nesting its data envelope', async () => {
+    const response = await request(app.getHttpServer()).get('/api/v1/probe/list').expect(200);
+    expect(response.body).toEqual({ data: [{ id: 'room-id' }], meta: { page: 2, limit: 20, total: 21 } });
+  });
+  it('exposes Swagger with the API prefix and bearer scheme', async () => {
+    const response = await request(app.getHttpServer()).get('/api/v1/docs-json').expect(200);
+    expect(response.body.paths['/api/v1/health']).toBeDefined();
+    expect(response.body.components.securitySchemes.bearer).toBeDefined();
+  });
+  it('allows only configured CORS origins', async () => {
+    const allowed = await request(app.getHttpServer()).get('/api/v1/health').set('Origin', 'http://localhost:3001').expect(200);
+    expect(allowed.headers['access-control-allow-origin']).toBe('http://localhost:3001');
+    const denied = await request(app.getHttpServer()).get('/api/v1/health').set('Origin', 'http://untrusted.example').expect(200);
+    expect(denied.headers['access-control-allow-origin']).toBeUndefined();
+  });
+});

@@ -1,6 +1,6 @@
 # Database design
 
-**Trạng thái:** thiết kế làm cơ sở triển khai, chưa tạo migration. Mở [database.drawio](database.drawio) bằng draw.io để chỉnh sửa.
+**Trạng thái:** đã có entity TypeORM và migration ban đầu trong `src/database/migrations`; thiết kế này là cơ sở triển khai. Mở [database.drawio](database.drawio) bằng draw.io để chỉnh sửa. ERD tóm tắt entity/quan hệ; migration SQL chứa đầy đủ constraint/default và quyết định schema thực tế.
 
 ## Entities
 
@@ -10,13 +10,15 @@
 | `rooms` | `id` UUID PK, `name` text UNIQUE, `capacity` integer, `description` text nullable, `is_active` boolean, timestamps | `capacity > 0`; ngừng hoạt động thay cho xóa cứng |
 | `bookings` | `id` UUID PK, `room_id` UUID FK, `user_id` UUID FK, `title` text, `start_at`/`end_at` timestamptz, `status`, timestamps | FK `RESTRICT`; status `confirmed`/`cancelled`; `start_at < end_at`; exclusion constraint cho booking confirmed |
 
-Trường `id` và timestamps do ứng dụng/database tạo. Đồng bộ user theo `keycloak_sub` đã xác thực; email và display name chỉ là snapshot có thể thay đổi. Tên phòng sử dụng ràng buộc UNIQUE của PostgreSQL; so sánh phân biệt chữ hoa/thường.
+Migration đặt default UUID `gen_random_uuid()` và default `created_at`/`updated_at` là `now()`. TypeORM cập nhật `updated_at` trong các thao tác update của adapter; không có trigger tự cập nhật timestamp khi chạy SQL ngoài ứng dụng. Đồng bộ user theo `keycloak_sub` đã xác thực; email và display name chỉ là snapshot có thể thay đổi. Tên phòng sử dụng ràng buộc UNIQUE của PostgreSQL; so sánh phân biệt chữ hoa/thường.
 
 ## Chống trùng lịch và index
 
-PostgreSQL extension `btree_gist`; exclusion constraint GiST theo `room_id WITH =` và `tstzrange(start_at, end_at, '[)') WITH &&`, điều kiện `status = 'confirmed'`. Đây là bảo vệ cho các giao dịch đồng thời; booking cancelled không nằm trong constraint. Giá trị thời gian lưu UTC bằng `timestamptz`.
+Migration SQL viết tay trong `src/database/migrations` là nguồn sự thật của schema; `synchronize` luôn giữ `false`. Metadata entity hiện phục vụ truy vấn và chưa phản ánh đầy đủ FK, exclusion constraint và UUID defaults của migration. Chưa hỗ trợ `migration:generate` cho đến khi metadata được đối chiếu đầy đủ; không thêm import entity xuyên feature chỉ để khai báo relation. Mỗi thay đổi migration phải được review các FK `RESTRICT`, check, exclusion constraint, index và UUID defaults, rồi kiểm chứng bằng PostgreSQL integration tests.
 
-Index bổ sung: `bookings(user_id, created_at, id)` cho danh sách cá nhân; index tên phòng/search sẽ chọn sau khi xem query. Không thêm index trùng với PK/UNIQUE đã tồn tại.
+Migration tạo extension `btree_gist` trong schema `public`; runtime dùng `installExtensions: false` và không tự cài extension. Lệnh revert giữ extension vì extension có thể được dùng chung. Constraint/index còn lại được tạo và xóa theo migration; exclusion constraint GiST theo `room_id WITH =` và `tstzrange(start_at, end_at, '[)') WITH &&`, điều kiện `status = 'confirmed'`. Đây là bảo vệ cho các giao dịch đồng thời; booking cancelled không nằm trong constraint. Giá trị thời gian lưu UTC bằng `timestamptz`.
+
+Index bổ sung: `bookings(user_id, created_at, id)` cho danh sách cá nhân; v1 không thêm index tên phòng/search ngoài UNIQUE `rooms(name)` hiện có. Chỉ thêm index mới bằng migration riêng khi có kết quả đo truy vấn chứng minh cần thiết. Không thêm index trùng với PK/UNIQUE đã tồn tại.
 
 ## Transaction và quản lý kết nối
 
@@ -42,5 +44,6 @@ Chi tiết ranh giới module tại [architecture.md](architecture.md); ví dụ
 ## Tự kiểm tra
 
 - [x] Kiểm tra mapping với requirement, role, quan hệ và concurrency.
-- [ ] Kiểm tra migrations, index và constraints trong PostgreSQL khi triển khai.
+- [x] Đã chạy migration trên PostgreSQL 17 và integration test cho concurrency, lịch liền nhau/cancelled, rollback, deactivate và user upsert.
+- [ ] Kiểm thử bổ sung trực tiếp các CHECK/FK và hiệu quả index khi triển khai các query CRUD/list.
 - [x] Làm rõ trách nhiệm connection pool, transaction và khóa dòng phòng trong thiết kế.

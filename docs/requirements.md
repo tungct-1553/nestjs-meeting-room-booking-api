@@ -1,6 +1,6 @@
 # Requirements và API contract
 
-**Trạng thái:** đặc tả làm cơ sở triển khai và tự kiểm tra. Tài liệu này thay thế tạm requirement sheet; đối chiếu mẫu của khóa học khi có link.
+**Trạng thái:** contract mục tiêu v1 đã chốt trong repo. HTTP hiện đã có health/readiness; các endpoint Users/Rooms/Bookings chưa được triển khai. Core service tạo booking/deactivate đã có nhưng chưa có HTTP controller và xác thực. Trạng thái chạy hiện tại xem [README](../README.md); ranh giới kỹ thuật xem [architecture](architecture.md).
 
 ## Đối tượng và phạm vi
 
@@ -21,12 +21,15 @@
 
 - Base path `/api/v1`; request xác thực dùng `Authorization: Bearer <access_token>` từ Keycloak.
 - JSON response; ngày giờ trả ISO 8601 UTC. List dùng `page` mặc định 1, `limit` mặc định 20, tối đa 100; response `{ "data": [...], "meta": { "page": 1, "limit": 20, "total": 0 } }`.
+- Thứ tự danh sách v1: phòng theo `name ASC, id ASC`; booking cá nhân theo `created_at DESC, id DESC`. Thứ tự được áp dụng sau filter và trước offset/limit; đây là contract cho các query list chưa triển khai.
+- Các path trong bảng là tương đối với `/api/v1`; ví dụ `/health` là `/api/v1/health`. Health/readiness trả body raw, HTTP 204 không có body.
 - Response một đối tượng: `{ "data": { ... } }`; lỗi: `{ "error": { "code": "...", "message": "...", "details": [] } }`. Validation trả 400, không tồn tại 404, xung đột thời gian 409.
-- `User`: `{ "id": "uuid", "displayName": "...", "email": "..." }`; `Room`: `{ "id": "uuid", "name": "...", "capacity": 10, "description": null, "isActive": true }`; `Booking`: `{ "id": "uuid", "roomId": "uuid", "userId": "uuid", "title": "...", "startAt": "...Z", "endAt": "...Z", "status": "confirmed", "createdAt": "...Z" }`.
+- `User`: `{ "id": "uuid", "displayName": null, "email": null }` (hai field này là `string | null`); `Room`: `{ "id": "uuid", "name": "...", "capacity": 10, "description": null, "isActive": true }`; `Booking`: `{ "id": "uuid", "roomId": "uuid", "userId": "uuid", "title": "...", "startAt": "...Z", "endAt": "...Z", "status": "confirmed", "createdAt": "...Z" }`.
 
-| Method | Endpoint | Quyền | Params / body | Response dự kiến |
+| Method | Endpoint (tương đối với `/api/v1`) | Quyền | Params / body | Response |
 |---|---|---|---|---|
-| GET | `/health` | Public | Không | 200 `{ "status": "ok" }` |
+| GET | `/health` | Public | Không | 200 `{ "status": "ok" }` — đã triển khai |
+| GET | `/health/ready` | Public | Không | 200 `{ "status": "ok" }`; 503 error envelope khi DB không sẵn sàng — đã triển khai |
 | GET | `/users/me` | Đăng nhập | Không | 200 `User` |
 | GET | `/rooms` | Đăng nhập | `page`, `limit`, `capacity` tối thiểu, `search` theo tên | 200 list `Room` đang active |
 | GET | `/rooms/:id` | Đăng nhập | UUID phòng | 200 `Room`; 404 nếu không có/đã inactive |
@@ -38,11 +41,11 @@
 | GET | `/bookings/:id` | Chủ booking | UUID booking | 200 `Booking`; 403 không phải chủ; 404 không tồn tại |
 | DELETE | `/bookings/:id` | Chủ booking | UUID booking | 200 `Booking` trạng thái `cancelled`; 403 không phải chủ; 404 không tồn tại |
 
-Mọi endpoint yêu cầu đăng nhập có thể trả 401; endpoint Admin có thể trả 403. Response mẫu là contract dự kiến; các lỗi được trả theo quy ước chung ở trên.
+Mọi endpoint yêu cầu đăng nhập có thể trả 401; endpoint Admin có thể trả 403. Ký hiệu `User`/`Room`/`Booking` trong bảng là kiểu dữ liệu bên trong `{ "data": ... }`; list có envelope `{ data, meta }`. Toàn bộ endpoint nghiệp vụ trong bảng là contract v1 chưa mở qua HTTP; các lỗi được trả theo quy ước chung ở trên.
 
 ## Phân quyền và bảo mật dữ liệu
 
-User ID được lấy từ access token, không nhận `userId` từ client khi đặt phòng. Token cần hợp lệ và có audience của API; dữ liệu cá nhân chỉ chứa thông tin cần cho nghiệp vụ.
+Access token đã xác minh cung cấp Keycloak `sub`, không cung cấp UUID user ứng dụng. Users upsert theo `users.keycloak_sub = sub` và trả `users.id`; UUID này là `Booking.userId`. Không nhận `userId` từ client khi đặt phòng. Token cần hợp lệ và có audience của API; dữ liệu cá nhân chỉ chứa thông tin cần cho nghiệp vụ.
 
 ## Acceptance criteria
 
