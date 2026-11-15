@@ -13,6 +13,6 @@ Trạng thái: **đang đặc tả**, chưa có ứng dụng hoặc API chạy �
 
 ## Phạm vi
 
-Room management, booking chống trùng lịch, upload ảnh phòng, email qua queue, scheduled reminder, RBAC, unit và e2e test. Phiên bản đầu không có approval workflow, thanh toán hoặc frontend.
+Room management, booking chống trùng lịch, RBAC, unit test và e2e test. Phiên bản đầu không có upload ảnh, notification, approval workflow, thanh toán hoặc frontend.
 
 API contract và database design là bản đề xuất, cần được mentor xác nhận trước khi viết entities/migrations.
