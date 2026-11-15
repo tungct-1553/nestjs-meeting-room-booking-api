@@ -14,6 +14,74 @@
 
 Mỗi feature có NestJS Module, Controller và Provider. Controller nhận DTO, không truy cập trực tiếp repository; application service thực thi nghiệp vụ và phụ thuộc port qua DI; infrastructure cung cấp adapter cho database. Các module không import repository nội bộ của module khác: dùng exported service hoặc port. Một tiến trình triển khai, không tách microservice.
 
+### Cấu trúc code và dependency
+
+Project dùng TypeORM với PostgreSQL. Port nghiệp vụ thuộc feature sử dụng nó; adapter TypeORM nằm trong infrastructure của feature. Application service không import `DataSource`, `EntityManager` hoặc ORM entity.
+
+```text
+src/
+├── database/
+│   ├── database.module.ts          # một DataSource/pool cho tiến trình
+│   ├── database.lifecycle.ts       # đóng pool khi shutdown
+│   └── migrations/
+├── bookings/
+│   ├── bookings.module.ts
+│   ├── bookings.controller.ts
+│   ├── bookings.service.ts
+│   ├── ports/
+│   │   ├── booking-repository.port.ts
+│   │   └── booking-unit-of-work.port.ts
+│   └── infrastructure/
+│       ├── booking.entity.ts
+│       ├── typeorm-booking.repository.ts
+│       └── typeorm-booking-unit-of-work.ts
+├── rooms/
+│   ├── rooms.module.ts
+│   ├── rooms.service.ts
+│   ├── public/
+│   │   └── rooms-booking-access.ts # hành vi công khai, không có kiểu ORM
+│   ├── ports/
+│   │   └── room-repository.port.ts
+│   └── infrastructure/
+│       ├── room.entity.ts
+│       ├── typeorm-room.repository.ts
+│       └── public/
+│           └── rooms-transaction.factory.ts
+└── users/                         # cùng quy ước phân lớp
+```
+
+`DatabaseModule` sở hữu kết nối và lifecycle, không chứa unit of work đặc thù booking. `BookingUnitOfWork` thuộc Bookings; implementation nằm ở infrastructure của Bookings.
+
+### Module giao tiếp và transaction
+
+Có hai API công khai của feature:
+
+- API ứng dụng: service hoặc port không có kiểu ORM, ví dụ `UsersService.getOrSync(principal)` và `RoomsBookingAccess.lockForBooking(roomId)`.
+- API tích hợp persistence: factory công khai của Rooms nhận `EntityManager` và trả `RoomsBookingAccess` đã gắn với transaction. Chỉ infrastructure của module khác được sử dụng factory này. Repository và entity của Rooms vẫn nội bộ.
+
+`BookingsModule` import `UsersModule`, `RoomsModule` và `DatabaseModule`. `BookingsService` inject `UsersService` và `BookingUnitOfWork`; không gọi kiểm tra active qua service ngoài transaction. Adapter unit of work inject factory công khai của Rooms, không import `RoomEntity` hay repository nội bộ. Rooms không import Bookings hoặc mở transaction riêng khi tham gia callback của Bookings.
+
+```text
+BookingsController -> BookingsService
+  -> UsersService.getOrSync(principal)               # trước transaction booking
+  -> BookingUnitOfWork.run(callback)
+       -> TypeORM mở transaction READ COMMITTED
+       -> RoomsTransactionFactory.bind(manager)      # API infrastructure công khai
+       -> callback nhận { rooms, bookings }          # port không chứa kiểu ORM
+            -> rooms.lockForBooking(roomId)          # khóa phòng bằng manager đó
+            -> kiểm tra active và thời gian
+            -> bookings.insert(input)                # cùng manager
+       -> commit hoặc rollback, trả connection về pool
+```
+
+User được upsert riêng theo `keycloak_sub` duy nhất; profile có thể tồn tại dù đặt phòng thất bại. Đây là snapshot danh tính, không cần rollback cùng booking. `userId` lấy từ kết quả đồng bộ principal đã xác thực, không lấy từ body request.
+
+Transaction khóa dòng phòng với `pessimistic_write` trước khi kiểm tra active và insert booking. Deactivate cũng khóa cùng dòng trong transaction của Rooms. Nếu deactivate commit trước, booking thấy phòng inactive và trả 404; nếu booking giữ khóa trước, deactivate đợi booking hoàn tất và giữ nguyên booking đó. Các request đặt cùng phòng tuần tự hóa trên dòng phòng; đây là tradeoff chấp nhận cho phạm vi v1. Không gọi mạng trong khi giữ khóa.
+
+Exclusion constraint vẫn bảo vệ khoảng thời gian `[startAt, endAt)`. Adapter unit of work chuyển riêng lỗi PostgreSQL `23P01` của constraint `bookings_no_overlap` thành lỗi nghiệp vụ; HTTP filter chuyển lỗi đó thành 409 theo error envelope. Lỗi khác được ném tiếp, không gộp mọi lỗi database thành 409.
+
+Xem [hướng dẫn và ví dụ triển khai](implementation-patterns.md) cho DI, lifecycle, public factory của Rooms, repository gắn manager và cách gọi unit of work từ service.
+
 ## Request lifecycle
 
 Client → routing/versioning → JWT/RBAC guard → DTO validation pipe → controller → application service/policy → repository/transaction → response serialization/interceptor. Exception filter chuyển lỗi có kiểm soát thành error response; log có request ID và context, không log token/password. Custom decorator cung cấp current principal; custom provider và lifecycle hooks được áp dụng khi phù hợp cho kết nối/đóng tài nguyên.
