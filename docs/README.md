@@ -1,17 +1,17 @@
 # Tài liệu
 
-| Tài liệu | Nội dung |
+| Tài liệu | Phạm vi |
 |---|---|
 | [Overview](overview.md) | Nội dung gốc khóa học NestJS - Xây dựng REST API |
-| [Requirements](requirements.md) | Phạm vi nghiệp vụ, quy tắc và API contract |
-| [Architecture](architecture.md) | Module, dependency, transaction và bảo mật |
-| [Database](database.md) | Schema, constraint, index và migration |
-| [Implementation patterns](implementation-patterns.md) | Ví dụ DI, transaction và response |
-| [ERD](database.drawio) | Sơ đồ entity và quan hệ |
+| [Requirements](requirements.md) | Quy tắc nghiệp vụ, quyền truy cập và HTTP contract |
+| [Architecture](architecture.md) | Quyền sở hữu module, phân lớp, DI và transaction boundary |
+| [Database](database.md) | Schema, constraint, index, migration và ACL bootstrap |
+| [Implementation patterns](implementation-patterns.md) | Cách sử dụng port/adapter, DI và transaction qua code |
+| [ERD](database.drawio) | Entity và quan hệ dữ liệu |
 
 ## Quy cách biên soạn
 
-- Viết trực tiếp cho người đọc kỹ thuật; dùng bảng, sơ đồ và ví dụ khi cần.
-- Mỗi tài liệu tập trung vào chủ đề của nó; nội dung liên quan được dẫn bằng liên kết.
-- Trạng thái triển khai và hướng dẫn chạy được ghi tại [README của project](../README.md).
-- Overview giữ nguyên nội dung khóa học; không chuyển thành kế hoạch triển khai hoặc thêm chỉ tiêu riêng của project.
+- Viết cho người đọc kỹ thuật: xác định trách nhiệm, contract và quyết định triển khai; dùng ví dụ để giải thích điểm tích hợp hoặc hành vi không hiển nhiên.
+- Mỗi chủ đề được mô tả tại tài liệu tương ứng; dẫn liên kết thay vì lặp API contract, schema hoặc hướng dẫn chạy.
+- Ví dụ phải khớp code và phân biệt contract nghiệp vụ với endpoint đã có. Cấu hình local và lệnh chạy/test nằm tại [README project](../README.md).
+- [Overview](overview.md) giữ nguyên nội dung khóa học; không thêm checklist triển khai, coverage hoặc chỉ tiêu riêng của project.
