@@ -38,6 +38,26 @@ BEGIN
   ) THEN
     RAISE EXCEPTION 'Application database roles must not have memberships in other roles.';
   END IF;
+  IF EXISTS (
+    SELECT 1
+    FROM pg_default_acl d
+    JOIN pg_roles owner_role ON owner_role.oid = d.defaclrole
+    LEFT JOIN pg_namespace n ON n.oid = d.defaclnamespace
+    CROSS JOIN LATERAL aclexplode(d.defaclacl) permission
+    LEFT JOIN pg_roles grantee_role ON grantee_role.oid = permission.grantee
+    WHERE d.defaclobjtype IN ('r', 'S')
+      AND (
+        (owner_role.rolname = 'booking_user'
+          AND (d.defaclnamespace = 0 OR n.nspname = 'public')
+          AND (permission.grantee = 0 OR grantee_role.rolname = 'keycloak_user'))
+        OR
+        (owner_role.rolname = 'keycloak_user'
+          AND (d.defaclnamespace = 0 OR n.nspname = 'keycloak')
+          AND (permission.grantee = 0 OR grantee_role.rolname = 'booking_user'))
+      )
+  ) THEN
+    RAISE EXCEPTION 'Unsafe default privileges for service roles. Revoke cross-service and PUBLIC table/sequence default grants (global and per-schema) explicitly before bootstrap.';
+  END IF;
 END $$;
 SELECT format('CREATE ROLE %I LOGIN', role_name)
 FROM (VALUES ('booking_user'), ('keycloak_user')) AS roles(role_name)

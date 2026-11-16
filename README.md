@@ -46,6 +46,8 @@ Bootstrap tạo role/schema/extension và cấp quyền theo schema; chạy lạ
 
 `docker compose down` giữ volume. `docker compose down -v` xóa toàn bộ dữ liệu local, gồm tài khoản và cấu hình Keycloak.
 
+Bootstrap từ chối default privileges cấp quyền table/sequence cho `PUBLIC` hoặc service đối diện, cả global và theo schema của service. Quản trị viên phải thu hồi đúng default grant trước khi chạy lại; `IN SCHEMA REVOKE` không thu hồi được global grant. Script không tự thay đổi default privileges.
+
 ## Keycloak và đăng nhập
 
 Realm `meeting-room` được import khi chưa tồn tại. Import không ghi đè realm đã có; thay đổi cấu hình realm hiện có qua Admin Console tại `http://localhost:8081/admin`. Hai client public dùng Authorization Code + PKCE S256; Direct Access Grants bị tắt. API audience là `meeting-room-api`; role lấy từ client roles `employee`/`admin`. Tài khoản đăng ký mặc định có Employee; Admin do quản trị viên cấp.
@@ -80,10 +82,13 @@ HTTP Rooms/Bookings, rate limiting và seeder nghiệp vụ chưa được tri�
 npm run typecheck
 npm run build
 npm test
+node scripts/test-bootstrap.mjs
 TEST_DATABASE_URL=postgresql://test_user:password@localhost:5432/booking_test npm run test:integration
 ```
 
 Integration tests dùng database test riêng, tạo/xóa schema riêng. Các kiểm thử schema bootstrap cần credentials quản trị; tài khoản runtime không có quyền tạo schema khác. Build chạy bằng `npm run build && npm start`.
+
+`test-bootstrap.mjs` yêu cầu Docker, tự tạo/xóa container PostgreSQL tạm và không dùng database local. Test kiểm tra default grants cũ, bootstrap preflight và quyền sequence mới qua numeric OID.
 
 ## Tài liệu
 
