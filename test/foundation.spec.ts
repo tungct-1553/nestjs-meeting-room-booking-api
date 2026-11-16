@@ -5,10 +5,12 @@ import { DataSource } from 'typeorm';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
 import { PaginationDto } from '../src/common/dto/pagination.dto';
+import { Public } from '../src/identity/decorators/public.decorator';
 import { PaginatedResponse } from '../src/common/types/paginated-response';
 import { BookingsService } from '../src/bookings/bookings.service';
 import { RoomsTransactionFactory } from '../src/rooms/infrastructure/public/rooms-transaction.factory';
 
+@Public()
 @Controller('probe')
 class ProbeController {
   @Get() read(@Query() pagination: PaginationDto) { return pagination; }
@@ -60,8 +62,9 @@ describe('HTTP foundation and module DI', () => {
     expect(response.body).toEqual({ data: [{ id: 'room-id' }], meta: { page: 2, limit: 20, total: 21 } });
   });
   it('exposes Swagger with the API prefix and bearer scheme', async () => {
-    const response = await request(app.getHttpServer()).get('/api/v1/docs-json').expect(200);
-    expect(response.body.paths['/api/v1/health']).toBeDefined();
+    const response = await request(app.getHttpServer()).get('/api/v1/docs/client/openapi.json').expect(200);
+    expect(response.body.paths['/api/v1/client/users/me']).toBeDefined();
+    expect(response.body.paths['/api/v1/admin/users/me']).toBeUndefined();
     expect(response.body.components.securitySchemes.bearer).toBeDefined();
   });
   it('allows only configured CORS origins', async () => {

@@ -2,7 +2,7 @@ import { BookingsService } from '../src/bookings/bookings.service';
 import { UsersService } from '../src/users/users.service';
 import type { BookingUnitOfWork } from '../src/bookings/ports/booking-unit-of-work.port';
 import { InvalidBookingTimeError, RoomUnavailableError } from '../src/bookings/errors/booking.errors';
-const principal = { sub: 'verified-sub', email: null, displayName: null };
+const principal = { sub: 'verified-sub', email: null, displayName: null, roles: ['employee' as const] };
 const dto = { roomId: 'room-id', title: 'Meeting', startAt: '2099-01-01T10:00:00Z', endAt: '2099-01-01T11:00:00Z' };
 describe('BookingsService', () => {
   const insert = jest.fn().mockImplementation(async (value) => value);

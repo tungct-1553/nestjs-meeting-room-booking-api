@@ -20,5 +20,13 @@ export function validateEnvironment(input: Record<string, unknown>) {
     } catch { throw new Error('CORS_ORIGINS must contain comma-separated HTTP origins'); }
   }
   value.CORS_ORIGINS = origins;
+  const issuer = String(value.KEYCLOAK_ISSUER ?? '');
+  try {
+    const url = new URL(issuer);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || issuer.endsWith('/') || !url.pathname.startsWith('/realms/') || !url.pathname.slice(8)) throw new Error();
+    if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error();
+  } catch { throw new Error('KEYCLOAK_ISSUER must be a realm URL (HTTPS, or HTTP on localhost) without trailing slash'); }
+  if (typeof value.API_CLIENT_ID !== 'string' || !value.API_CLIENT_ID.trim() || value.API_CLIENT_ID.trim() !== value.API_CLIENT_ID) throw new Error('API_CLIENT_ID is required');
+  value.KEYCLOAK_ISSUER = issuer;
   return value;
 }

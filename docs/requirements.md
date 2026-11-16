@@ -17,7 +17,7 @@
 
 ## Quy ước API
 
-- Base path `/api/v1`; request xác thực dùng `Authorization: Bearer <access_token>` từ Keycloak.
+- Base path `/api/v1`; namespace `/client` dành cho Employee/Admin, `/admin` chỉ cho Admin; request xác thực dùng `Authorization: Bearer <access_token>` từ Keycloak.
 - JSON response; ngày giờ trả ISO 8601 UTC. List dùng `page` mặc định 1, `limit` mặc định 20, tối đa 100; response `{ "data": [...], "meta": { "page": 1, "limit": 20, "total": 0 } }`.
 - Thứ tự danh sách: phòng theo `name ASC, id ASC`; booking cá nhân theo `created_at DESC, id DESC`. Thứ tự được áp dụng sau filter và trước offset/limit.
 - Các path trong bảng là tương đối với `/api/v1`; ví dụ `/health` là `/api/v1/health`. Health/readiness trả body raw, HTTP 204 không có body.
@@ -28,18 +28,19 @@
 |---|---|---|---|---|
 | GET | `/health` | Public | Không | 200 `{ "status": "ok" }` |
 | GET | `/health/ready` | Public | Không | 200 `{ "status": "ok" }`; 503 error envelope khi DB không sẵn sàng |
-| GET | `/users/me` | Đăng nhập | Không | 200 `User` |
-| GET | `/rooms` | Đăng nhập | `page`, `limit`, `capacity` tối thiểu, `search` theo tên | 200 list `Room` đang active |
-| GET | `/rooms/:id` | Đăng nhập | UUID phòng | 200 `Room`; 404 nếu không có/đã inactive |
-| POST | `/rooms` | Admin | `name`, `capacity`, `description?` | 201 `Room`; 400 invalid |
-| PATCH | `/rooms/:id` | Admin | `name?`, `capacity?`, `description?` | 200 `Room`; 404 không tồn tại |
-| DELETE | `/rooms/:id` | Admin | UUID phòng | 204; ngừng hoạt động phòng; 404 không tồn tại |
-| POST | `/bookings` | Đăng nhập | `roomId`, `title`, `startAt`, `endAt` | 201 `Booking`; 404 phòng không khả dụng; 409 trùng lịch |
-| GET | `/bookings` | Đăng nhập | `page`, `limit`, `status?` (`confirmed`/`cancelled`) | 200 list `Booking` của user hiện tại |
-| GET | `/bookings/:id` | Chủ booking | UUID booking | 200 `Booking`; 403 không phải chủ; 404 không tồn tại |
-| DELETE | `/bookings/:id` | Chủ booking | UUID booking | 200 `Booking` trạng thái `cancelled`; 403 không phải chủ; 404 không tồn tại |
+| GET | `/client/users/me` | Employee/Admin | Không | 200 `User` |
+| GET | `/admin/users/me` | Admin | Không | 200 `User` |
+| GET | `/client/rooms` | Employee/Admin | `page`, `limit`, `capacity` tối thiểu, `search` theo tên | 200 list `Room` đang active |
+| GET | `/client/rooms/:id` | Employee/Admin | UUID phòng | 200 `Room`; 404 nếu không có/đã inactive |
+| POST | `/admin/rooms` | Admin | `name`, `capacity`, `description?` | 201 `Room`; 400 invalid |
+| PATCH | `/admin/rooms/:id` | Admin | `name?`, `capacity?`, `description?` | 200 `Room`; 404 không tồn tại |
+| DELETE | `/admin/rooms/:id` | Admin | UUID phòng | 204; ngừng hoạt động phòng; 404 không tồn tại |
+| POST | `/client/bookings` | Employee/Admin | `roomId`, `title`, `startAt`, `endAt` | 201 `Booking`; 404 phòng không khả dụng; 409 trùng lịch |
+| GET | `/client/bookings` | Employee/Admin | `page`, `limit`, `status?` (`confirmed`/`cancelled`) | 200 list `Booking` của user hiện tại |
+| GET | `/client/bookings/:id` | Chủ booking | UUID booking | 200 `Booking`; 403 không phải chủ; 404 không tồn tại |
+| DELETE | `/client/bookings/:id` | Chủ booking | UUID booking | 200 `Booking` trạng thái `cancelled`; 403 không phải chủ; 404 không tồn tại |
 
-Mọi endpoint yêu cầu đăng nhập có thể trả 401; endpoint Admin có thể trả 403. Ký hiệu `User`/`Room`/`Booking` trong bảng là kiểu dữ liệu bên trong `{ "data": ... }`; list có envelope `{ data, meta }`. Các lỗi sử dụng error envelope quy định ở trên.
+Token không hợp lệ trả 401; lỗi kết nối JWKS khi không có signing key cache khả dụng trả 503; thiếu role trả 403. Role không tồn tại hoặc claim sai cấu trúc được coi là danh sách role rỗng. Ký hiệu `User`/`Room`/`Booking` trong bảng là kiểu dữ liệu bên trong `{ "data": ... }`; list có envelope `{ data, meta }`. Các lỗi sử dụng error envelope quy định ở trên.
 
 ## Phân quyền và bảo mật dữ liệu
 

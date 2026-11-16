@@ -1,60 +1,78 @@
 # Meeting Room Booking API
 
-Mock Project backend đặt phòng họp, xây dựng bằng NestJS theo kiến trúc **modular monolith**. Mục tiêu v1: nhân viên xem phòng, đặt và hủy lịch của mình; admin quản lý phòng. Keycloak phụ trách tài khoản và xác thực.
+NestJS modular monolith cho đặt phòng họp, sử dụng PostgreSQL và Keycloak. API Client/Admin có controller và DTO riêng, dùng chung application service và repository.
 
-Trạng thái: **đã có foundation NestJS và các adapter transaction TypeORM**. HTTP hiện công khai health/readiness và Swagger; Keycloak guard, RBAC và các HTTP API nghiệp vụ sẽ được triển khai tiếp. Core service nhận principal từ caller nội bộ; chưa có HTTP nghiệp vụ cho client tự gửi principal/userId.
+## Local
 
-## Tài liệu
-
-- [Requirements và API contract](docs/requirements.md)
-- [Kiến trúc và bảo mật](docs/architecture.md)
-- [Ví dụ phân lớp, DI và transaction](docs/implementation-patterns.md)
-- [Thiết kế database](docs/database.md) · [Sơ đồ draw.io](docs/database.drawio)
-- [Overview khóa học](docs/overview.md)
-
-## Phạm vi
-
-Room management, booking chống trùng lịch, RBAC, unit test và e2e test. Phiên bản đầu không có upload ảnh, notification, approval workflow, thanh toán hoặc frontend.
-
-API contract và database design là cơ sở triển khai, được cập nhật khi có thay đổi nghiệp vụ.
-
-## Chạy local
-
-Yêu cầu Node.js 22 trở lên, npm và PostgreSQL 14 trở lên. Tài khoản database cần quyền tạo extension `btree_gist` ở bước migration (hoặc DBA cài extension trước). Runtime không tự synchronize schema hay chạy migration.
-
-Migration SQL viết tay là nguồn sự thật của schema; `synchronize` giữ `false`. Chưa hỗ trợ `migration:generate` vì metadata entity chưa phản ánh đầy đủ FK, exclusion constraint và UUID defaults. Khi đổi migration, review các constraint/index/default và chạy PostgreSQL integration tests; xem [database design](docs/database.md).
+Yêu cầu Node.js 22+, Docker Compose và npm.
 
 ```bash
 npm ci
 cp .env.example .env
-# Sửa DATABASE_URL, CORS_ORIGINS trong .env cho môi trường local.
+# Thay các password; DATABASE_URL phải khớp BOOKING_DB_PASSWORD và POSTGRES_PORT.
+docker compose up -d --wait
 npm run migration:run
+node scripts/bootstrap-keycloak-users.mjs
 npm run start:dev
 ```
 
-Build và chạy bản compiled:
+PostgreSQL dùng database `meeting_room_booking`, schema `public` cho ứng dụng và schema `keycloak` cho Keycloak. Mỗi schema có database role riêng. PostgreSQL mặc định cổng 5432; đổi `POSTGRES_PORT` nếu cổng đã được sử dụng. Keycloak ở `http://localhost:8081`, API ở `http://localhost:3000`.
+
+| Biến môi trường | Giá trị/ý nghĩa |
+|---|---|
+| `DATABASE_URL` | URL kết nối bằng `booking_user` |
+| `POSTGRES_PASSWORD` | Password quản trị PostgreSQL dùng bootstrap |
+| `BOOKING_DB_PASSWORD`, `KEYCLOAK_DB_PASSWORD` | Password hai database role |
+| `KEYCLOAK_ADMIN_USERNAME`, `KEYCLOAK_ADMIN_PASSWORD` | Quản trị Keycloak, mặc định username `admin` |
+| `KEYCLOAK_EMPLOYEE_PASSWORD`, `KEYCLOAK_TEST_ADMIN_PASSWORD` | Password tài khoản local test |
+| `KEYCLOAK_ISSUER` | `http://localhost:8081/realms/meeting-room` |
+| `API_CLIENT_ID` | `meeting-room-api` |
+| `PORT`, `DB_POOL_MAX` | Mặc định 3000 và 10 |
+| `CORS_ORIGINS` | Danh sách HTTP origin phân cách dấu phẩy |
+
+Không đưa `.env` vào Git. URL phải URL-encode ký tự đặc biệt trong password.
+
+## Bootstrap database
+
+Script init chạy trên volume mới. Với volume có sẵn, khởi động PostgreSQL rồi áp dụng bootstrap trước khi khởi động Keycloak:
 
 ```bash
-npm run build
-npm start
+docker compose up -d postgres
+bash scripts/bootstrap-database.sh
+docker compose up -d --wait keycloak
 ```
 
-- `GET /api/v1/health`: liveness public, trả `{ "status": "ok" }`.
-- `GET /api/v1/health/ready`: kiểm tra database, trả 503 khi dependency không sẵn sàng.
-- `/api/v1/docs`: Swagger UI; `/api/v1/docs-json`: OpenAPI JSON có bearer scheme.
+Bootstrap tạo role/schema/extension và cấp quyền theo schema; chạy lại không xóa dữ liệu. Database phải thuộc tài khoản quản trị, không thuộc `booking_user` hoặc `keycloak_user`; script dừng nếu owner không phù hợp và không tự đổi database owner. Nếu bảng ứng dụng có owner khác, script dừng. Sau khi kiểm tra ownership, dùng `bash scripts/bootstrap-database.sh --adopt-app-objects` để chuyển riêng các bảng ứng dụng và sequence liên quan sang `booking_user`. Schema `public` do `keycloak_user` sở hữu, schema Keycloak có owner khác hoặc hai service role có membership ngoài dự kiến phải được xử lý riêng bằng tài khoản quản trị.
 
-Config được validate khi bootstrap; `DATABASE_URL` bắt buộc, `PORT` mặc định 3000, `DB_POOL_MAX` mặc định 10. `CORS_ORIGINS` là các HTTP origin phân cách dấu phẩy, mặc định không cho phép origin nào. Mỗi request có header `x-request-id`; log chỉ chứa request ID, HTTP method, status và thời gian xử lý, không ghi token/body/query string.
+`docker compose down` giữ volume. `docker compose down -v` xóa toàn bộ dữ liệu local, gồm tài khoản và cấu hình Keycloak.
 
-## Các phần đã dựng
+## Keycloak và đăng nhập
 
-- Module Identity, Users, Rooms, Bookings cùng cấu hình, validation, error envelope và response interceptor dùng chung. Identity hiện là ranh giới module chuẩn bị cho Keycloak, chưa có verifier/guard.
-- Một DataSource/pool dùng chung, lifecycle shutdown, CLI migration; schema users/rooms/bookings với FK RESTRICT, check và exclusion constraint chống trùng giờ.
-- Users đồng bộ hồ sơ qua repository port; Rooms công khai factory cung cấp thao tác khóa phòng cho transaction của Bookings.
-- Core service tạo booking và deactivate phòng dùng cùng quy tắc khóa; unit of work tạo repository theo manager của từng transaction và ánh xạ đúng lỗi constraint.
+Realm `meeting-room` được import khi chưa tồn tại. Import không ghi đè realm đã có; thay đổi cấu hình realm hiện có qua Admin Console tại `http://localhost:8081/admin`. Hai client public dùng Authorization Code + PKCE S256; Direct Access Grants bị tắt. API audience là `meeting-room-api`; role lấy từ client roles `employee`/`admin`. Tài khoản đăng ký mặc định có Employee; Admin do quản trị viên cấp.
 
-Danh mục và quy cách tài liệu tại [docs/README.md](docs/README.md). Core services hiện được gọi nội bộ, chưa có controller HTTP nghiệp vụ. Các endpoint trong requirements vẫn là contract cần hoàn thành sau khi có JWT/RBAC; danh sách, hủy booking, CRUD phòng đầy đủ, rate limiting và seeder CLI thuộc các bước tiếp theo.
+| Swagger UI | OAuth client | Callback |
+|---|---|---|
+| `/api/v1/docs/client` | `meeting-room-client` | `/api/v1/docs/client/oauth2-redirect.html` |
+| `/api/v1/docs/admin` | `meeting-room-admin` | `/api/v1/docs/admin/oauth2-redirect.html` |
 
-Handler trả một đối tượng nghiệp vụ để interceptor tạo `{ data: object }`. Handler danh sách phân trang trả `PaginatedResponse<T>` từ `src/common/types/paginated-response.ts`, ví dụ `new PaginatedResponse(rows, { page, limit, total })`, để response có đúng `{ data: rows, meta: { page, limit, total } }`. Health dùng `RawResponse`; HTTP 204 giữ body rỗng.
+Callback được đăng ký với origin `http://localhost:3000`. Khi đổi host/cổng API, cập nhật redirect URI và Web Origins tương ứng trong Keycloak. Trang `/api/v1/docs` liên kết tới hai UI. Mỗi UI có Authorize để đăng nhập bằng PKCE hoặc nhập bearer token trực tiếp.
+
+Script bootstrap tạo/cập nhật `employee@example.test` và `admin@example.test`, đọc password từ môi trường. Chạy lại giữ UUID tài khoản và cập nhật password/profile local. Access token có TTL 5 phút; session idle 30 phút. Refresh token được xử lý ở Keycloak bằng refresh-token grant với đúng OAuth client, API không cung cấp login/register/refresh endpoint riêng.
+
+## API
+
+| Endpoint | Quyền |
+|---|---|
+| `GET /api/v1/health` | Public |
+| `GET /api/v1/health/ready` | Public; 503 khi PostgreSQL không sẵn sàng |
+| `GET /api/v1/client/users/me` | Employee/Admin |
+| `GET /api/v1/admin/users/me` | Admin |
+
+Hồ sơ trả `{ data: { id, email, displayName } }`; UUID ứng dụng được đồng bộ từ Keycloak `sub`. Token sai trả 401, thiếu role trả 403; lỗi lấy JWKS khi không có key cache khả dụng trả 503. Lỗi giữ envelope `{ error: { code, message, details } }`.
+
+JWT verifier dùng RS256, issuer/audience/type và thời gian hiệu lực. JWKS cache tối đa 5 key trong 10 phút, timeout 5 giây, giới hạn 10 request/phút mỗi tiến trình. HTTP logging chỉ ghi request ID, method, status và duration.
+
+HTTP Rooms/Bookings, rate limiting và seeder nghiệp vụ chưa được triển khai. Core transaction booking/deactivate và migration đã có.
 
 ## Kiểm tra
 
@@ -62,8 +80,15 @@ Handler trả một đối tượng nghiệp vụ để interceptor tạo `{ dat
 npm run typecheck
 npm run build
 npm test
-# Dùng database riêng cho integration test; test tự tạo và xóa schema riêng.
-TEST_DATABASE_URL=postgresql://user:password@localhost:5432/booking_test npm run test:integration
+TEST_DATABASE_URL=postgresql://test_user:password@localhost:5432/booking_test npm run test:integration
 ```
 
-Unit/HTTP tests kiểm tra DI, envelope/validation, CORS, health, Swagger, quy tắc lấy userId từ principal đã đồng bộ và ánh xạ lỗi. Owner policy xem/hủy booking qua HTTP chưa có vì các API đó chưa được triển khai. Integration tests chạy PostgreSQL thật để kiểm tra migration, concurrency, lịch liền nhau, cancelled, rollback và thứ tự khóa giữa booking/deactivate. Test yêu cầu database riêng với quyền tạo schema/extension. Không thay PostgreSQL bằng SQLite vì exclusion constraint và khóa dòng là hành vi cần kiểm chứng.
+Integration tests dùng database test riêng, tạo/xóa schema riêng. Các kiểm thử schema bootstrap cần credentials quản trị; tài khoản runtime không có quyền tạo schema khác. Build chạy bằng `npm run build && npm start`.
+
+## Tài liệu
+
+- [Requirements và API contract](docs/requirements.md)
+- [Kiến trúc](docs/architecture.md)
+- [DI và transaction](docs/implementation-patterns.md)
+- [Database](docs/database.md) · [ERD](docs/database.drawio)
+- [Overview khóa học](docs/overview.md)

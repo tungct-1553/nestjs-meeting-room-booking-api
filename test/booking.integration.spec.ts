@@ -1,3 +1,9 @@
+import { Test } from '@nestjs/testing';
+import { ConfigService } from '@nestjs/config';
+import request from 'supertest';
+import { AppModule } from '../src/app.module';
+import { configureApp } from '../src/configure-app';
+import { createIdentityFixture } from './helpers/identity-fixture';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { databaseOptions } from '../src/database/options';
@@ -20,7 +26,7 @@ let userId: string;
 let roomId: string;
 let uow: TypeormBookingUnitOfWork;
 let service: BookingsService;
-const principal = { sub: 'integration-sub', email: null, displayName: null };
+const principal = { sub: 'integration-sub', email: null, displayName: null, roles: ['employee' as const] };
 const dates = { startAt: new Date('2099-01-01T10:00:00Z'), endAt: new Date('2099-01-01T11:00:00Z') };
 const dto = () => ({ roomId, title: 'Meeting', startAt: dates.startAt.toISOString(), endAt: dates.endAt.toISOString() });
 const input = () => ({ roomId, userId, title: 'Meeting', ...dates });
@@ -141,5 +147,29 @@ it('enforces the exclusion constraint even when callers bypass the room-lock ser
     if (first.isTransactionActive) await first.rollbackTransaction();
     if (second.isTransactionActive) await second.rollbackTransaction();
     await first.release(); await second.release();
+  }
+});
+
+it('syncs both authenticated me controllers concurrently into the same PostgreSQL user', async () => {
+  const fixture = await createIdentityFixture();
+  let app: import('@nestjs/common').INestApplication | undefined;
+  try {
+    const module = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(DataSource).useValue(source)
+      .overrideProvider(ConfigService).useValue(fixture.config).compile();
+    app = module.createNestApplication({ logger: false }); configureApp(app); await app.init();
+    const token = fixture.token({ sub: 'concurrent-profile', resource_access: { 'meeting-room-api': { roles: ['admin'] } } });
+    const responses = await Promise.all(['client', 'admin'].map(zone => request(app!.getHttpServer()).get(`/api/v1/${zone}/users/me`).set('Authorization', `Bearer ${token}`).expect(200)));
+    expect(responses[0].body).toEqual(responses[1].body);
+    const id = responses[0].body.data.id;
+    expect(responses[0].body.data).toEqual({ id, email: 'verified@example.test', displayName: 'Verified User' });
+    expect(await source.query('SELECT id FROM users WHERE keycloak_sub=$1', ['concurrent-profile'])).toEqual([{ id }]);
+    const changed = fixture.token({ sub: 'concurrent-profile', name: undefined, email: undefined, resource_access: { 'meeting-room-api': { roles: ['employee'] } } });
+    const response = await request(app.getHttpServer()).get('/api/v1/client/users/me').set('Authorization', `Bearer ${changed}`).expect(200);
+    expect(response.body.data).toEqual({ id, email: null, displayName: null });
+  } finally {
+    // App shutdown owns this DataSource; restore it for suite teardown if needed.
+    if (app) await app.close();
+    await fixture.close();
   }
 });
