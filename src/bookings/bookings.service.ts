@@ -10,7 +10,7 @@ import { InvalidBookingTimeError, RoomUnavailableError } from './errors/booking.
 export class BookingsService {
   constructor(private readonly users: UsersService, @Inject(BOOKING_UNIT_OF_WORK) private readonly uow: BookingUnitOfWork) {}
   async create(principal: Principal, dto: CreateBookingDto): Promise<Booking> {
-    const user = await this.users.getOrSync(principal);
+    const user = await this.users.requireBySub(principal.sub);
     const startAt = new Date(dto.startAt);
     const endAt = new Date(dto.endAt);
     return this.uow.run(async ({ rooms, bookings }) => {

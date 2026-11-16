@@ -13,5 +13,5 @@ export class AdminUsersController {
   constructor(private readonly users: UsersService) {}
   @Get('me')
   @ApiOkResponse({ schema: { type: 'object', properties: { data: { $ref: '#/components/schemas/AdminUserResponseDto' } } } })
-  async me(@CurrentPrincipal() principal: Principal): Promise<AdminUserResponseDto> { return AdminUserResponseDto.from(await this.users.getOrSync(principal)); }
+  async me(@CurrentPrincipal() principal: Principal): Promise<AdminUserResponseDto> { return AdminUserResponseDto.from(await this.users.requireBySub(principal.sub)); }
 }

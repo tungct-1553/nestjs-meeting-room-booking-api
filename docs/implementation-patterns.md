@@ -32,37 +32,58 @@ app.enableShutdownHooks();
 
 ## 2. Đăng ký adapter cho port
 
-Port persistence của Users mô tả thao tác đồng bộ hồ sơ, sử dụng `Principal` và kiểu `User` công khai thay vì ORM entity:
+Users tách port đọc khỏi port đồng bộ; input persistence không chứa token, role hoặc kiểu ORM:
 
 ```ts
-export const USER_REPOSITORY = Symbol('USER_REPOSITORY');
+export const USER_READ_REPOSITORY = Symbol('USER_READ_REPOSITORY');
+export const USER_SYNC_REPOSITORY = Symbol('USER_SYNC_REPOSITORY');
 
-export interface UserRepositoryPort {
-  getOrSync(principal: Principal): Promise<User>;
+export interface UserReadRepositoryPort {
+  findBySub(sub: string): Promise<User | null>;
+}
+export interface ProfileSyncInput {
+  sub: string;
+  email: string | null;
+  displayName: string | null;
+  issuedAt: number;
+}
+export interface UserSyncRepositoryPort {
+  sync(input: ProfileSyncInput): Promise<User>;
 }
 ```
 
-Trong `UsersModule`, `useClass` nối token với adapter TypeORM. Service inject token đó; module chỉ export service để feature khác sử dụng:
+`useExisting` nối hai token với cùng một adapter singleton. Module chỉ export service cho feature khác:
 
 ```ts
-// Phần đăng ký provider trong UsersModule
 providers: [
   UsersService,
-  { provide: USER_REPOSITORY, useClass: TypeormUserRepository },
+  TypeormUserRepository,
+  { provide: USER_READ_REPOSITORY, useExisting: TypeormUserRepository },
+  { provide: USER_SYNC_REPOSITORY, useExisting: TypeormUserRepository },
 ],
 exports: [UsersService],
 
 // UsersService
 constructor(
-  @Inject(USER_REPOSITORY) private readonly repository: UserRepositoryPort,
+  @Inject(USER_READ_REPOSITORY) private readonly reader: UserReadRepositoryPort,
+  @Inject(USER_SYNC_REPOSITORY) private readonly writer: UserSyncRepositoryPort,
 ) {}
 
-getOrSync(principal: Principal) {
-  return this.repository.getOrSync(principal);
+async requireBySub(sub: string) {
+  const user = await this.reader.findBySub(sub);
+  if (!user) throw new UserNotProvisionedError();
+  return user;
 }
 ```
 
-Interface dùng `import type`; token dùng value import để tồn tại ở runtime. Chỉ `UsersModule` quyết định adapter triển khai port. Thay adapter không yêu cầu thay service gọi nó.
+Interface dùng `import type`; token dùng value import để tồn tại ở runtime. Service sync kiểm tra `Principal.issuedAt`, rồi truyền profile cùng watermark vào port ghi. Adapter dùng `INSERT ... ON CONFLICT ... DO UPDATE ... WHERE` trong transaction `READ COMMITTED`:
+
+```sql
+WHERE users.profile_token_iat IS NULL
+   OR users.profile_token_iat < EXCLUDED.profile_token_iat
+```
+
+Token cùng/cũ hơn không cập nhật snapshot hoặc timestamp. Khi `RETURNING` không có dòng, adapter SELECT hồ sơ hiện tại trong cùng transaction. Upsert đã chờ/giữ khóa conflict; SELECT dùng snapshot mới của `READ COMMITTED` nên đọc được cả dòng do request đồng thời vừa insert. Chi tiết contract nằm tại [user-provisioning.md](user-provisioning.md).
 
 ## 3. Gọi service của module khác
 
@@ -75,10 +96,10 @@ constructor(
 ) {}
 
 // Trong create(principal, dto)
-const user = await this.users.getOrSync(principal);
+const user = await this.users.requireBySub(principal.sub);
 ```
 
-Kết quả `user.id` là UUID ứng dụng. Caller không cần biết Users dùng query upsert nào hoặc `UserEntity` được mapping ra sao. Lời gọi này hoàn tất trước transaction booking; adapter Users truy vấn qua DataSource dùng chung, ngoài transaction booking và không tham gia callback unit of work.
+Kết quả `user.id` là UUID ứng dụng. Thiếu hồ sơ trả lỗi `USER_NOT_PROVISIONED`; caller không tạo user hoặc cập nhật profile trong luồng này. Lời gọi này hoàn tất trước transaction booking; adapter Users truy vấn qua DataSource dùng chung, ngoài transaction booking và không tham gia callback unit of work.
 
 Không gọi service này giữa callback rồi giả định các query của nó tự dùng transaction manager hiện tại. Tham gia transaction phải đi qua contract được bind manager tường minh như phần dưới.
 
@@ -135,7 +156,7 @@ Implementation: [RoomsTransactionFactory](../src/rooms/infrastructure/public/roo
 
 ## 5. Sử dụng callback trong application service
 
-Sau bước đồng bộ user, service tạo `Date` từ input và thực hiện nghiệp vụ qua các port:
+Sau bước đọc user, service tạo `Date` từ input và thực hiện nghiệp vụ qua các port:
 
 ```ts
 const startAt = new Date(dto.startAt);
@@ -180,7 +201,7 @@ Controller hồ sơ nhận principal qua decorator, gọi service và map kiểu
 
 ```ts
 async me(@CurrentPrincipal() principal: Principal): Promise<ClientUserResponseDto> {
-  return ClientUserResponseDto.from(await this.users.getOrSync(principal));
+  return ClientUserResponseDto.from(await this.users.requireBySub(principal.sub));
 }
 ```
 

@@ -60,7 +60,7 @@ Response JSON, field ngày giờ serialize ISO 8601 UTC. Quy ước envelope:
 
 ## 4. Endpoint
 
-Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong envelope `data`. Health và hai endpoint hồ sơ đã có HTTP; các endpoint Room/Booking là contract cho phần nghiệp vụ tiếp theo.
+Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong envelope `data`. Health, sync và hai endpoint đọc hồ sơ đã có HTTP; các endpoint Room/Booking là contract cho phần nghiệp vụ tiếp theo.
 
 ### Health và hồ sơ
 
@@ -68,10 +68,11 @@ Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong env
 |---|---|---|---|
 | GET | `/health` | Public | 200 raw health |
 | GET | `/health/ready` | Public | 200 raw health; 503 nếu database không sẵn sàng |
+| POST | `/client/users/sync` | Employee/Admin | 200 `User`; không nhận body; 401 nếu thiếu `iat` hợp lệ; 503 nếu database không sẵn sàng |
 | GET | `/client/users/me` | Employee/Admin | 200 `User` của người gọi |
 | GET | `/admin/users/me` | Admin | 200 `User` của người gọi |
 
-Hai endpoint hồ sơ đồng bộ cùng user theo `sub` và trả cùng UUID; Client/Admin sử dụng response DTO riêng.
+Sync lấy `sub`, email/display name và `iat` từ token đã xác minh; request body không rỗng trả 400. Sync lặp hoặc đồng thời cùng `sub` giữ UUID, token cùng/cũ hơn không cập nhật snapshot. Hai endpoint `/users/me` chỉ đọc hồ sơ; thiếu hồ sơ trả 409 `USER_NOT_PROVISIONED`. Client/Admin dùng response DTO riêng; không có Admin sync endpoint. Hồ sơ Admin được cấp qua CLI. [Luồng provisioning](user-provisioning.md) mô tả thứ tự gọi và retry.
 
 ### Phòng
 
@@ -130,13 +131,13 @@ Ví dụ response của `GET /api/v1/client/users/me`:
 | 401 | Thiếu access token hoặc token không hợp lệ |
 | 403 | Thiếu role hoặc không phải owner booking |
 | 404 | Resource không tồn tại; phòng không khả dụng khi tạo booking |
-| 409 | Booking trùng lịch |
+| 409 | Booking trùng lịch hoặc chưa có hồ sơ ứng dụng |
 | 500 | Lỗi nội bộ không dự kiến |
-| 503 | Database readiness thất bại hoặc lỗi lấy JWKS khi không có signing key cache khả dụng |
+| 503 | Database readiness/sync không sẵn sàng hoặc lỗi lấy JWKS khi không có signing key cache khả dụng |
 
 Role claim thiếu/sai cấu trúc được chuẩn hóa thành danh sách rỗng; quyền truy cập Client/Admin khi đó bị từ chối với 403. API không trả token hoặc chi tiết lỗi database/JWKS nội bộ.
 
-`error.details` là danh sách thông báo validation; các lỗi khác dùng danh sách rỗng. Lỗi HTTP dùng code `HTTP_<status>`; lỗi không xác định dùng `INTERNAL_SERVER_ERROR`. Các lỗi nghiệp vụ hiện có gồm `INVALID_BOOKING_TIME` (400), `ROOM_UNAVAILABLE`/`ROOM_NOT_FOUND` (404) và `BOOKING_TIME_CONFLICT` (409).
+`error.details` là danh sách thông báo validation; các lỗi khác dùng danh sách rỗng. Lỗi HTTP dùng code `HTTP_<status>`; lỗi không xác định dùng `INTERNAL_SERVER_ERROR`. Các lỗi nghiệp vụ hiện có gồm `INVALID_BOOKING_TIME` (400), `ROOM_UNAVAILABLE`/`ROOM_NOT_FOUND` (404) và `BOOKING_TIME_CONFLICT` (409), `USER_NOT_PROVISIONED` (409), `INVALID_PROFILE_TOKEN` (401) và `PROFILE_SYNC_UNAVAILABLE` (503).
 
 ```json
 {

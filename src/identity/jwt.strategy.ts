@@ -34,6 +34,6 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const claims = client && typeof client === 'object' && !Array.isArray(client) ? (client as Record<string, unknown>).roles : undefined;
     const roles: Role[] = Array.isArray(claims) && claims.every(role => typeof role === 'string') ? [...new Set(claims.filter((role): role is Role => role === 'admin' || role === 'employee'))] : [];
     const text = (value: unknown) => typeof value === 'string' ? value : null;
-    return { sub: payload.sub, email: text(payload.email), displayName: text(payload.name) ?? text(payload.preferred_username), roles };
+    return { sub: payload.sub, email: text(payload.email), displayName: text(payload.name) ?? text(payload.preferred_username), roles, ...(typeof payload.iat === 'number' && Number.isFinite(payload.iat) && payload.iat >= 0 && payload.iat <= Number.MAX_SAFE_INTEGER ? { issuedAt: payload.iat } : {}) };
   }
 }

@@ -4,4 +4,5 @@ export interface Principal {
   email: string | null;
   displayName: string | null;
   roles: Role[];
+  issuedAt?: number;
 }

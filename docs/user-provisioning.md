@@ -1,6 +1,6 @@
 # Khởi tạo hồ sơ user từ webapp
 
-Thiết kế thay thế việc upsert user trong `/users/me` và use case booking. Tài liệu dùng để review trước khi thay đổi code; các contract bên dưới chưa được triển khai.
+Client khởi tạo hồ sơ qua endpoint sync sau đăng nhập. `/users/me` và use case booking chỉ đọc hồ sơ đã tồn tại; Admin được cấp hồ sơ qua CLI.
 
 ## 1. Ranh giới trách nhiệm
 
@@ -61,18 +61,18 @@ Authorization: Bearer <access_token>
 
 Giữ UNIQUE `users.keycloak_sub` và thực hiện thao tác tạo/cập nhật nguyên tử tại database; không dùng mẫu SELECT rồi INSERT không có bảo vệ tranh chấp. Hai request cùng `sub` luôn nhận cùng UUID.
 
-Bổ sung `users.profile_token_iat` nullable để ghi mốc token đã được dùng đồng bộ. Principal cung cấp `issuedAt` từ claim `iat` đã xác minh; endpoint sync yêu cầu `iat` là NumericDate hợp lệ.
+`users.profile_token_iat` dùng `double precision`, nullable, giữ phần giây lẻ của NumericDate. Giá trị chấp nhận là số hữu hạn từ 0 đến `Number.MAX_SAFE_INTEGER`. Cột này được dùng để ghi mốc token đã được dùng đồng bộ. Principal cung cấp `issuedAt` từ claim `iat` đã xác minh; endpoint sync yêu cầu `iat` là NumericDate hợp lệ.
 
 | Trạng thái hồ sơ | Xử lý |
 |---|---|
 | Chưa có | Insert UUID/profile và `profile_token_iat` |
 | Đã có, watermark null | Đồng bộ từ token và đặt watermark |
 | Token có `iat` lớn hơn watermark | Cập nhật snapshot và watermark, giữ UUID |
-| Token có `iat` nhỏ hơn hoặc bằng watermark | Chỉ đọc/trả hồ sơ hiện có, không ghi |
+| Token có `iat` nhỏ hơn hoặc bằng watermark | Trả hồ sơ hiện có, không cập nhật profile/timestamp |
 
-Hai token cùng `iat` sử dụng snapshot được lưu trước; muốn đồng bộ thay đổi tiếp theo phải dùng token được phát ở giây sau. Không dùng `updated_at` làm phiên bản token. Watermark ngăn token cũ ghi đè snapshot mới hơn; đây là snapshot theo token, không phải cơ chế phản ánh tức thời mọi thay đổi trong Keycloak.
+Hai token cùng `iat` sử dụng snapshot được lưu trước; cập nhật tiếp theo cần token có `iat` lớn hơn. Không dùng `updated_at` làm phiên bản token. Watermark ngăn token cũ ghi đè snapshot mới hơn; đây là snapshot theo token, không phải cơ chế phản ánh tức thời mọi thay đổi trong Keycloak.
 
-Với token mới hơn, transaction cập nhật watermark kể cả khi profile không đổi. Chi phí ghi nằm ở bước thiết lập phiên/đồng bộ rõ ràng; các lần gọi lặp cùng token và các API đọc không cập nhật timestamp hoặc profile.
+Với token mới hơn, transaction cập nhật watermark kể cả khi profile không đổi. Chi phí ghi nằm ở bước thiết lập phiên/đồng bộ rõ ràng; các lần gọi lặp cùng token và các API đọc không cập nhật timestamp hoặc profile. Sync cùng/cũ hơn vẫn có thể chờ/giữ khóa dòng khi kiểm tra conflict; API đọc chỉ SELECT.
 
 ## 4. Luồng đọc và phục hồi lỗi
 
@@ -86,35 +86,35 @@ flowchart TD
     E -->|Lỗi| G[Hiển thị trạng thái khởi tạo lỗi và cho thử lại]
 ```
 
-`GET /api/v1/client/users/me` và `GET /api/v1/admin/users/me` chỉ SELECT hồ sơ. Use case tạo booking lấy user bằng truy vấn theo `sub`; không còn gọi `getOrSync` hoặc tự khởi tạo hồ sơ. Guard tiếp tục chỉ xác thực/phân quyền.
+`GET /api/v1/client/users/me` và `GET /api/v1/admin/users/me` chỉ SELECT hồ sơ. Use case tạo booking lấy user bằng truy vấn theo `sub`; không tự khởi tạo hồ sơ. Guard tiếp tục chỉ xác thực/phân quyền.
 
 | Tình huống | Kết quả và phục hồi |
 |---|---|
 | Thiếu/sai/hết hạn token | 401; client đăng nhập hoặc refresh trước khi thử sync lại |
 | Không đủ role | 403; không tạo/cập nhật hồ sơ |
 | Token hợp lệ nhưng chưa có hồ sơ khi đọc/thực hiện nghiệp vụ | 409, code `USER_NOT_PROVISIONED`; không ghi database |
-| Database lỗi trong sync | Transaction rollback; trả 503 với thông báo tổng quát, cho phép gọi lại |
+| Database không sẵn sàng trong sync | Trả 503; lỗi trước commit được rollback. Mất kết nối khi commit có thể chưa xác định kết quả; retry cùng token an toàn và giữ UUID |
 | Commit thành công nhưng client mất response | Gọi lại cùng token; trả cùng UUID, không ghi lặp |
 | Không lấy được signing key và không có cache dùng được | 503 theo contract Identity; không tạo hồ sơ |
 
 Client retry lỗi mạng/503 tối đa ba lần với khoảng chờ 1, 2 và 4 giây. Hết lượt thì giữ màn hình khởi tạo lỗi và cho retry thủ công; không điều hướng vào nghiệp vụ khi chưa sync thành công. Không retry tự động với 400/401/403. Khi phục hồi từ `USER_NOT_PROVISIONED`, chỉ replay request gốc một lần sau sync 200 để tránh vòng lặp.
 
-Lỗi database được ánh xạ 503 tại biên persistence cho thao tác này; lỗi lập trình không dự kiến vẫn trả 500. Response lỗi dùng error envelope hiện có, không lộ SQL hoặc token.
+Lỗi kết nối, timeout kết nối, hết connection slot hoặc database shutdown được ánh xạ 503 tại biên persistence cho thao tác này; lỗi lập trình không dự kiến vẫn trả 500. Response lỗi dùng error envelope hiện có, không lộ SQL hoặc token.
 
 ## 5. Admin
 
-Không có API đăng ký Admin hoặc `/admin/users/sync`. Bootstrap/CLI cấp account Keycloak và tạo hồ sơ `public.users` theo `sub` trước khi cho Admin sử dụng hệ thống. Thao tác có thể chạy lại và giữ UUID; không lưu password hoặc role trong hồ sơ ứng dụng.
+Không có API đăng ký Admin hoặc `/admin/users/sync`. Bootstrap/CLI cấp account Keycloak và tạo hồ sơ `public.users` theo `sub` trước khi cho Admin sử dụng hệ thống. Chạy `node scripts/bootstrap-keycloak-users.mjs` sau migration. Script tạo tài khoản test Employee/Admin trong Keycloak và chỉ insert hồ sơ ứng dụng cho Admin; Employee tạo hồ sơ qua Client sync. Chạy lại giữ UUID, snapshot và watermark hiện có; không lưu password hoặc role trong hồ sơ ứng dụng.
 
 Admin UI đăng nhập rồi gọi `GET /api/v1/admin/users/me` để đọc hồ sơ. Nếu thiếu hồ sơ, trả `USER_NOT_PROVISIONED`; Admin UI báo lỗi cấu hình, không chạy luồng đăng ký Client. Quản trị viên chạy lại bootstrap để hoàn tất phần còn thiếu. Admin sử dụng Client API với hồ sơ đã được cấp sẵn.
 
-## 6. Thay đổi khi triển khai
+## 6. Implementation
 
-- Thêm Client sync controller/use case, truy vấn `findBySub` và kiểm tra `requireBySub` cho các use case cần UUID ứng dụng.
-- Tách port đọc khỏi thao tác sync; bỏ ghi user trong hai endpoint `/users/me` và trong tạo booking.
-- Bổ sung `profile_token_iat` bằng migration; dữ liệu hiện có giữ UUID và nhận watermark ở lần sync tiếp theo. Không tự đồng bộ toàn bộ user khi khởi động API.
-- Bổ sung `issuedAt` vào principal từ token hợp lệ; validation `iat` áp dụng cho sync, không biến mọi request đọc thành thao tác đồng bộ.
-- Chuyển script bootstrap: hồ sơ Admin được cấp qua CLI; Employee test được tạo ở Keycloak và gọi endpoint sync theo luồng Client để có hồ sơ ứng dụng.
-- Cập nhật Swagger, API contract, kiến trúc và ví dụ DI theo luồng đã được duyệt; giữ nguyên đăng ký/đăng nhập/refresh token tại Keycloak.
+- Client sync controller/use case, truy vấn `findBySub` và kiểm tra `requireBySub` cho các use case cần UUID ứng dụng.
+- Port đọc và sync tách riêng; không ghi user trong hai endpoint `/users/me` và trong tạo booking.
+- Migration bổ sung `profile_token_iat`; dữ liệu hiện có giữ UUID và nhận watermark ở lần sync tiếp theo. Không tự đồng bộ toàn bộ user khi khởi động API.
+- `issuedAt` trong principal lấy từ token hợp lệ; validation `iat` áp dụng cho sync, không biến mọi request đọc thành thao tác đồng bộ.
+- Script bootstrap: hồ sơ Admin được cấp qua CLI; Employee test được tạo ở Keycloak và gọi endpoint sync theo luồng Client để có hồ sơ ứng dụng.
+- Swagger Client có sync và đọc hồ sơ; Swagger Admin chỉ có đọc hồ sơ. Đăng ký/đăng nhập/refresh token tại Keycloak.
 
 ## 7. Kiểm chứng
 

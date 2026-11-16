@@ -1,6 +1,6 @@
 # Database
 
-PostgreSQL lưu dữ liệu ứng dụng và Keycloak trong database `meeting_room_booking`. [ERD](database.drawio) thể hiện quan hệ dữ liệu; [migration SQL](../src/database/migrations/1794700000000-InitialSchema.ts) định nghĩa bảng, defaults và constraints của ứng dụng.
+PostgreSQL lưu dữ liệu ứng dụng và Keycloak trong database `meeting_room_booking`. [ERD](database.drawio) thể hiện quan hệ dữ liệu; [migrations](../src/database/migrations/) định nghĩa bảng, defaults và constraints của ứng dụng.
 
 ## Phân vùng dữ liệu
 
@@ -17,11 +17,13 @@ Hai service dùng chung PostgreSQL container nhưng không đọc hoặc ghi sch
 
 | Bảng | Dữ liệu | Ràng buộc |
 |---|---|---|
-| `users` | `id` UUID, `keycloak_sub` text; `email`, `display_name` text nullable; timestamps | PK `id`, UNIQUE `keycloak_sub` |
+| `users` | `id` UUID, `keycloak_sub` text; `email`, `display_name` text nullable; `profile_token_iat` double precision nullable; timestamps | PK `id`, UNIQUE `keycloak_sub` |
 | `rooms` | `id` UUID, `name` text, `capacity` integer, `description` text nullable, `is_active` boolean; timestamps | PK `id`, UNIQUE `name`, CHECK `capacity > 0` |
 | `bookings` | `id` UUID, `room_id`, `user_id` UUID, `title` text, `start_at`, `end_at` timestamptz, `status` text; timestamps | PK `id`, FK tới Rooms/Users, CHECK thời gian và status, exclusion constraint |
 
-Một user và một phòng có nhiều booking. `bookings.user_id` tham chiếu UUID ứng dụng; `keycloak_sub` là khóa đồng bộ danh tính, không phải khóa ngoại booking. Email/display name được cập nhật từ token như profile snapshot, không quyết định quyền truy cập; role không được lưu trong bảng `users`.
+Một user và một phòng có nhiều booking. `bookings.user_id` tham chiếu UUID ứng dụng; `keycloak_sub` là khóa đồng bộ danh tính, không phải khóa ngoại booking. Email/display name được cập nhật từ token qua endpoint sync như profile snapshot, không quyết định quyền truy cập; role không được lưu trong bảng `users`.
+
+`profile_token_iat` lưu NumericDate từ token đã sync. Kiểu `double precision` khớp số JavaScript và giữ phần giây lẻ; sync chấp nhận số hữu hạn từ 0 đến `Number.MAX_SAFE_INTEGER`. Watermark null dành cho hồ sơ cũ hoặc Admin được cấp qua CLI. Migration `UserProfileTokenIat` chỉ thêm cột nullable, giữ UUID và FK; lần sync đầu tiên đặt watermark. Token cùng/cũ hơn không đổi snapshot hoặc `updated_at`.
 
 Hai FK dùng `ON DELETE RESTRICT`, giữ lịch sử booking khi dữ liệu liên quan còn được tham chiếu. Deactivate đặt `rooms.is_active = false`; cancel đặt `bookings.status = 'cancelled'`, không xóa dòng booking.
 
@@ -66,7 +68,7 @@ Migration SQL viết tay quản lý schema; metadata entity phục vụ truy v�
 | `migrationsRun` | `false` | Chạy migration bằng CLI trước khi khởi động API |
 | `installExtensions` | `false` | Bootstrap quản trị chịu trách nhiệm cài extension |
 
-Bootstrap cài `btree_gist` vào `public`; migration giữ `CREATE EXTENSION IF NOT EXISTS` để dùng trong môi trường test độc lập có đủ quyền. Revert xóa bookings → rooms → users và các index/constraint liên quan, giữ extension dùng chung. Keycloak quản lý migration trong schema riêng; lệnh migration ứng dụng không quản lý bảng Keycloak.
+Bootstrap cài `btree_gist` vào `public`; migration giữ `CREATE EXTENSION IF NOT EXISTS` để dùng trong môi trường test độc lập có đủ quyền. Revert migration watermark chỉ xóa `profile_token_iat`; revert migration khởi tạo xóa bookings → rooms → users và các index/constraint liên quan, giữ extension dùng chung. Keycloak quản lý migration trong schema riêng; lệnh migration ứng dụng không quản lý bảng Keycloak.
 
 Tiến trình HTTP dùng một DataSource/pool từ `DatabaseModule`, đóng qua shutdown hook. TypeORM CLI nhận DataSource chưa initialize từ `src/database/data-source.ts` và quản lý vòng đời kết nối trong tiến trình riêng. Quy tắc sử dụng manager trong transaction nằm tại [architecture.md](architecture.md#4-transaction-và-tính-nhất-quán); lệnh chạy nằm trong [README](../README.md).
 

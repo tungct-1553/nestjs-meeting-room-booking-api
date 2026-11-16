@@ -1,9 +1,3 @@
-import { Test } from '@nestjs/testing';
-import { ConfigService } from '@nestjs/config';
-import request from 'supertest';
-import { AppModule } from '../src/app.module';
-import { configureApp } from '../src/configure-app';
-import { createIdentityFixture } from './helpers/identity-fixture';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { databaseOptions } from '../src/database/options';
@@ -26,7 +20,7 @@ let userId: string;
 let roomId: string;
 let uow: TypeormBookingUnitOfWork;
 let service: BookingsService;
-const principal = { sub: 'integration-sub', email: null, displayName: null, roles: ['employee' as const] };
+const principal = { sub: 'integration-sub', email: null, displayName: null, roles: ['employee' as const], issuedAt: 100 };
 const dates = { startAt: new Date('2099-01-01T10:00:00Z'), endAt: new Date('2099-01-01T11:00:00Z') };
 const dto = () => ({ roomId, title: 'Meeting', startAt: dates.startAt.toISOString(), endAt: dates.endAt.toISOString() });
 const input = () => ({ roomId, userId, title: 'Meeting', ...dates });
@@ -42,7 +36,9 @@ async function waitForBlockedTransaction(): Promise<void> {
     if (rows.length) return;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
-  throw new Error('Expected a transaction waiting for the room row lock');
+  const activity = await source.query('SELECT pid, state, wait_event_type, wait_event, application_name, length(query) AS query_length, query, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1', [schema]);
+  const connections = await source.query('SELECT pid, state, wait_event_type, wait_event, application_name, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity WHERE datname=current_database()');
+  throw new Error(`Expected a transaction waiting for the room row lock: ${JSON.stringify({ activity, connections })}`);
 }
 beforeAll(async () => {
   admin = await new DataSource({ type: 'postgres', url: testUrl, installExtensions: false }).initialize();
@@ -51,11 +47,11 @@ beforeAll(async () => {
   await source.initialize();
   await source.runMigrations();
   uow = new TypeormBookingUnitOfWork(source, new RoomsTransactionFactory());
-  service = new BookingsService(new UsersService(new TypeormUserRepository(source)), uow);
+  service = new BookingsService(new UsersService(new TypeormUserRepository(source), new TypeormUserRepository(source)), uow);
 });
 beforeEach(async () => {
   await source.query('TRUNCATE bookings, rooms, users');
-  const user = await new TypeormUserRepository(source).getOrSync(principal);
+  const user = await new TypeormUserRepository(source).sync(principal);
   userId = user.id;
   const rows = await source.query("INSERT INTO rooms(name, capacity) VALUES ('Review room', 10) RETURNING id");
   roomId = rows[0].id;
@@ -68,8 +64,15 @@ afterAll(async () => {
   }
 });
 it('keeps a stable user ID while refreshing profile snapshots', async () => {
-  const updated = await new TypeormUserRepository(source).getOrSync({ ...principal, email: 'new@example.test', displayName: 'New name' });
+  const updated = await new TypeormUserRepository(source).sync({ ...principal, issuedAt: 101, email: 'new@example.test', displayName: 'New name' });
   expect(updated).toEqual({ id: userId, email: 'new@example.test', displayName: 'New name' });
+});
+it('creates a booking using the existing UUID without refreshing its user profile', async () => {
+  const sql = 'SELECT id,email,display_name,profile_token_iat,updated_at,xmin::text AS version FROM users WHERE id=$1';
+  const before = await source.query(sql, [userId]);
+  const booking = await service.create({ ...principal, issuedAt: 999, email: 'not-applied@example.test', displayName: 'Not applied' }, dto());
+  expect(booking.userId).toBe(userId);
+  expect(await source.query(sql, [userId])).toEqual(before);
 });
 it('serializes same-room booking requests and maps an overlapping insert to conflict', async () => {
   const results = await Promise.allSettled([service.create(principal, dto()), service.create(principal, dto())]);
@@ -147,29 +150,5 @@ it('enforces the exclusion constraint even when callers bypass the room-lock ser
     if (first.isTransactionActive) await first.rollbackTransaction();
     if (second.isTransactionActive) await second.rollbackTransaction();
     await first.release(); await second.release();
-  }
-});
-
-it('syncs both authenticated me controllers concurrently into the same PostgreSQL user', async () => {
-  const fixture = await createIdentityFixture();
-  let app: import('@nestjs/common').INestApplication | undefined;
-  try {
-    const module = await Test.createTestingModule({ imports: [AppModule] })
-      .overrideProvider(DataSource).useValue(source)
-      .overrideProvider(ConfigService).useValue(fixture.config).compile();
-    app = module.createNestApplication({ logger: false }); configureApp(app); await app.init();
-    const token = fixture.token({ sub: 'concurrent-profile', resource_access: { 'meeting-room-api': { roles: ['admin'] } } });
-    const responses = await Promise.all(['client', 'admin'].map(zone => request(app!.getHttpServer()).get(`/api/v1/${zone}/users/me`).set('Authorization', `Bearer ${token}`).expect(200)));
-    expect(responses[0].body).toEqual(responses[1].body);
-    const id = responses[0].body.data.id;
-    expect(responses[0].body.data).toEqual({ id, email: 'verified@example.test', displayName: 'Verified User' });
-    expect(await source.query('SELECT id FROM users WHERE keycloak_sub=$1', ['concurrent-profile'])).toEqual([{ id }]);
-    const changed = fixture.token({ sub: 'concurrent-profile', name: undefined, email: undefined, resource_access: { 'meeting-room-api': { roles: ['employee'] } } });
-    const response = await request(app.getHttpServer()).get('/api/v1/client/users/me').set('Authorization', `Bearer ${changed}`).expect(200);
-    expect(response.body.data).toEqual({ id, email: null, displayName: null });
-  } finally {
-    // App shutdown owns this DataSource; restore it for suite teardown if needed.
-    if (app) await app.close();
-    await fixture.close();
   }
 });

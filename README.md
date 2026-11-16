@@ -38,6 +38,8 @@ Swagger hỗ trợ OAuth2 Authorization Code + PKCE và bearer token. Redirect U
 | `employee@example.test` | `KEYCLOAK_EMPLOYEE_PASSWORD` |
 | `admin@example.test` | `KEYCLOAK_TEST_ADMIN_PASSWORD` |
 
+Sau đăng nhập Employee, gọi `POST /api/v1/client/users/sync` không có body trước khi đọc `/client/users/me`. Script bootstrap cấp sẵn hồ sơ Admin; `/admin/users/me` chỉ đọc. Xem [luồng khởi tạo hồ sơ](docs/user-provisioning.md).
+
 ## Build và test
 
 ```bash
@@ -57,6 +59,7 @@ Integration tests yêu cầu database test riêng với quyền tạo schema/ext
 ## Tài liệu
 
 - [API contract](docs/requirements.md)
+- [User provisioning](docs/user-provisioning.md)
 - [Kiến trúc](docs/architecture.md)
 - [Database](docs/database.md) · [ERD](docs/database.drawio)
 - [DI và transaction](docs/implementation-patterns.md)

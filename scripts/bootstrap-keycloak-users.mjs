@@ -1,10 +1,12 @@
 import 'dotenv/config';
+import pg from 'pg';
 
 const required = (name) => {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
 };
+const databaseUrl = required('DATABASE_URL');
 const issuer = new URL(process.env.KEYCLOAK_ISSUER ?? 'http://localhost:8081/realms/meeting-room');
 const realmMatch = issuer.pathname.match(/^\/realms\/([^/]+)$/);
 if (!realmMatch) throw new Error('KEYCLOAK_ISSUER must identify a Keycloak realm');
@@ -62,6 +64,16 @@ async function main() {
     const unexpected = mappings.filter((entry) => entry.name !== account.role && entry.name !== 'employee');
     if (unexpected.length) await api(mappingsPath, 'DELETE', unexpected);
     await api(mappingsPath, 'POST', [role]);
+    if (account.role === 'admin') {
+      const database = new pg.Client({ connectionString: databaseUrl, connectionTimeoutMillis: 10000 });
+      try {
+        await database.connect();
+        // Retain the existing UUID, snapshot and token watermark on repeat bootstrap.
+        await database.query(`INSERT INTO public.users (keycloak_sub, email, display_name)
+          VALUES ($1, $2, $3) ON CONFLICT (keycloak_sub) DO NOTHING`,
+        [userId, account.username, `${account.firstName} Local`]);
+      } finally { await database.end(); }
+    }
     console.log(`Configured local ${account.role}: ${account.username}`);
   }
 }

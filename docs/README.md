@@ -7,7 +7,7 @@
 | [Architecture](architecture.md) | Quyền sở hữu module, phân lớp, DI và transaction boundary |
 | [Database](database.md) | Schema, constraint, index, migration và ACL bootstrap |
 | [Implementation patterns](implementation-patterns.md) | Cách sử dụng port/adapter, DI và transaction qua code |
-| [User provisioning](user-provisioning.md) | Thiết kế luồng Client chủ động khởi tạo hồ sơ, chờ review trước implementation |
+| [User provisioning](user-provisioning.md) | Client sync, đọc hồ sơ, retry và cấp hồ sơ Admin qua CLI |
 | [ERD](database.drawio) | Entity và quan hệ dữ liệu |
 
 ## Quy cách biên soạn

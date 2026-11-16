@@ -22,7 +22,7 @@ describe('Identity HTTP with signed JWT and JWKS', () => {
   let app: INestApplication;
   let fixture: Awaited<ReturnType<typeof createIdentityFixture>>;
   const profile = { id: 'local-uuid', email: 'verified@example.test', displayName: 'Verified User' };
-  const users = { getOrSync: jest.fn().mockResolvedValue(profile) };
+  const users = { requireBySub: jest.fn().mockResolvedValue(profile), sync: jest.fn().mockResolvedValue(profile) };
   beforeAll(async () => {
     fixture = await createIdentityFixture();
     const module = await Test.createTestingModule({ imports: [AppModule], controllers: [IdentityProbe] })
@@ -36,10 +36,15 @@ describe('Identity HTTP with signed JWT and JWKS', () => {
     const call = request(app.getHttpServer()).get(`/api/v1/${zone}/users/me`);
     return token ? call.set('Authorization', `Bearer ${token}`) : call;
   };
-  it('authenticates employee, maps profile and syncs only verified identity', async () => {
+  const sync = (token: string, body?: object) => {
+    const call = request(app.getHttpServer()).post('/api/v1/client/users/sync').set('Authorization', `Bearer ${token}`);
+    return body === undefined ? call : call.send(body);
+  };
+  it('reads the provisioned profile without invoking synchronization', async () => {
     const response = await me(fixture.token()).expect(200);
     expect(response.body).toEqual({ data: profile });
-    expect(users.getOrSync).toHaveBeenCalledWith({ sub: 'verified-user', email: profile.email, displayName: profile.displayName, roles: ['employee'] });
+    expect(users.requireBySub).toHaveBeenCalledWith('verified-user');
+    expect(users.sync).not.toHaveBeenCalled();
   });
   it('enforces employee/admin roles and authentication before authorization', async () => {
     await me().expect(401);
@@ -71,15 +76,29 @@ describe('Identity HTTP with signed JWT and JWKS', () => {
     await me(fixture.token({}, { keyid: 'unknown' })).expect(401);
   });
   it('maps optional profile fields and preserves null values', async () => {
-    await me(fixture.token({ name: undefined, preferred_username: 'fallback', email: 12 })).expect(200);
-    expect(users.getOrSync).toHaveBeenLastCalledWith(expect.objectContaining({ displayName: 'fallback', email: null }));
-    await me(fixture.token({ name: undefined, preferred_username: undefined, email: undefined })).expect(200);
-    expect(users.getOrSync).toHaveBeenLastCalledWith(expect.objectContaining({ displayName: null, email: null }));
+    await sync(fixture.token({ name: undefined, preferred_username: 'fallback', email: 12 })).expect(200);
+    expect(users.sync).toHaveBeenLastCalledWith(expect.objectContaining({ displayName: 'fallback', email: null }));
+    await sync(fixture.token({ name: undefined, preferred_username: undefined, email: undefined })).expect(200);
+    expect(users.sync).toHaveBeenLastCalledWith(expect.objectContaining({ displayName: null, email: null }));
+  });
+  it('accepts only verified claims and an empty sync body', async () => {
+    await sync(fixture.token()).expect(200);
+    expect(users.sync).toHaveBeenLastCalledWith(expect.objectContaining({ sub: 'verified-user', issuedAt: expect.any(Number), roles: ['employee'] }));
+    for (const body of [{ sub: 'attacker' }, { email: 'fake' }, { roles: ['admin'] }, []]) {
+      const before = users.sync.mock.calls.length;
+      await sync(fixture.token(), body).expect(400);
+      expect(users.sync.mock.calls.length).toBe(before);
+    }
+    await sync(fixture.token(), {}).expect(200);
+    await request(app.getHttpServer()).post('/api/v1/client/users/sync').set('Authorization', `Bearer ${fixture.token()}`).set('Content-Type', 'text/plain').send('unexpected').expect(400);
+    await sync(fixture.token({ resource_access: {} })).expect(403);
+    await sync(fixture.token({ resource_access: { 'meeting-room-api': { roles: ['admin'] } } })).expect(200);
+    await request(app.getHttpServer()).post('/api/v1/admin/users/sync').expect(404);
   });
   it('publishes isolated Swagger documents, client IDs and callback routes', async () => {
     for (const zone of ['client', 'admin']) {
       const response = await request(app.getHttpServer()).get(`/api/v1/docs/${zone}/openapi.json`).expect(200);
-      expect(Object.keys(response.body.paths)).toEqual([`/api/v1/${zone}/users/me`]);
+      expect(Object.keys(response.body.paths)).toEqual(zone === 'client' ? ['/api/v1/client/users/me', '/api/v1/client/users/sync'] : ['/api/v1/admin/users/me']);
       expect(response.body.components.securitySchemes.oauth2.flows.authorizationCode).toBeDefined();
       const setup = await request(app.getHttpServer()).get(`/api/v1/docs/${zone}/swagger-ui-init.js`).expect(200);
       expect(setup.text).toContain(`meeting-room-${zone}`);

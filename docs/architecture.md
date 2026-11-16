@@ -9,7 +9,7 @@ Module được phân chia theo quyền sở hữu hành vi và dữ liệu. Mod
 | Module | Phạm vi sở hữu | API cho module khác |
 |---|---|---|
 | Identity | Xác minh token, tạo principal và kiểm tra role; không lưu hồ sơ hoặc truy cập repository Users | Kiểu `Principal`, decorators; JWT/Roles guards được đăng ký toàn cục |
-| Users | Hồ sơ ứng dụng trong `users`, ánh xạ Keycloak `sub` sang UUID nội bộ và đồng bộ profile | `UsersService.getOrSync(principal)` |
+| Users | Hồ sơ ứng dụng trong `users`, ánh xạ Keycloak `sub` sang UUID nội bộ và đồng bộ profile | `UsersService.sync(principal)`, `findBySub(sub)`, `requireBySub(sub)` |
 | Rooms | Dữ liệu `rooms`, thao tác deactivate và truy cập phòng có khóa | `RoomsService.deactivate(id)`; `RoomsBookingAccess` qua `RoomsTransactionFactory` |
 | Bookings | Dữ liệu `bookings`, use case tạo booking, kiểm tra phòng/thời gian và điều phối transaction | `BookingsService.create(principal, dto)` |
 | Database | Khởi tạo DataSource/pool, cấu hình persistence, lifecycle và migration | Provider `DataSource` |
@@ -62,13 +62,13 @@ Nghiệp vụ hiện nằm trong application service; entity là mapping persist
 
 ### Client và Admin
 
-`ClientUsersController` và `AdminUsersController` có routing, role policy và response DTO riêng, nhưng đều gọi `UsersService.getOrSync`. Việc thay đổi contract HTTP của một nhóm không yêu cầu tạo bản sao service hoặc repository.
+`ClientUsersController` và `AdminUsersController` có routing, role policy và response DTO riêng, và cùng đọc qua `UsersService.requireBySub`. Chỉ Client cung cấp `POST /users/sync` để khởi tạo/đồng bộ hồ sơ; Admin được cấp hồ sơ qua CLI. Việc thay đổi contract HTTP của một nhóm không yêu cầu tạo bản sao service hoặc repository.
 
 Role được kiểm tra ở guard trước khi gọi controller. Quy tắc dữ liệu thuộc use case: ví dụ lấy UUID user qua Users service và kiểm tra trạng thái phòng trong transaction booking. Controller không tự truy vấn database hoặc mở transaction. Quyền HTTP không được suy ra từ tên OAuth client; Employee/Admin được xác định từ role trong principal.
 
 ## 3. Contract, DI và giao tiếp giữa module
 
-Port thuộc module sở hữu hành vi: `UserRepositoryPort` thuộc Users, `RoomsBookingAccess` thuộc Rooms, `BookingUnitOfWork` thuộc Bookings. Các repository port nội bộ không phải API cho module khác.
+Port thuộc module sở hữu hành vi: `UserReadRepositoryPort` và `UserSyncRepositoryPort` thuộc Users, `RoomsBookingAccess` thuộc Rooms, `BookingUnitOfWork` thuộc Bookings. Các repository port nội bộ không phải API cho module khác.
 
 Module nối interface với adapter bằng DI token. Ví dụ Users:
 
@@ -76,13 +76,16 @@ Module nối interface với adapter bằng DI token. Ví dụ Users:
 // users.module.ts
 providers: [
   UsersService,
-  { provide: USER_REPOSITORY, useClass: TypeormUserRepository },
+  TypeormUserRepository,
+  { provide: USER_READ_REPOSITORY, useExisting: TypeormUserRepository },
+  { provide: USER_SYNC_REPOSITORY, useExisting: TypeormUserRepository },
 ],
 exports: [UsersService],
 
 // users.service.ts
 constructor(
-  @Inject(USER_REPOSITORY) private readonly repository: UserRepositoryPort,
+  @Inject(USER_READ_REPOSITORY) private readonly reader: UserReadRepositoryPort,
+  @Inject(USER_SYNC_REPOSITORY) private readonly writer: UserSyncRepositoryPort,
 ) {}
 ```
 
@@ -92,7 +95,7 @@ Có hai hình thức giao tiếp:
 
 | Trường hợp | Contract | Ví dụ |
 |---|---|---|
-| Gọi một use case độc lập | Service công khai, không có kiểu ORM | Bookings gọi `UsersService.getOrSync` trước transaction |
+| Gọi một use case độc lập | Service công khai, không có kiểu ORM | Bookings gọi `UsersService.requireBySub` trước transaction |
 | Phối hợp persistence trong một transaction | Port nghiệp vụ và factory tích hợp công khai ở infrastructure | Adapter unit of work gọi `RoomsTransactionFactory.bind(manager)` |
 
 `RoomsTransactionFactory` nhận `EntityManager` và trả `RoomsBookingAccess`. Bookings chỉ nhận thao tác `lockForBooking`; `RoomEntity` vẫn nằm trong Rooms. Chỉ infrastructure của Bookings được sử dụng factory có kiểu TypeORM, còn application service nhận các port qua callback unit of work.
@@ -105,7 +108,7 @@ Có hai hình thức giao tiếp:
 
 ```text
 BookingsService.create
-  → UsersService.getOrSync(principal) → users.id
+  → UsersService.requireBySub(principal.sub) → users.id
   → BookingUnitOfWork.run(callback)
       → mở transaction READ COMMITTED
       → tạo Rooms access và booking repository với cùng manager
@@ -115,7 +118,7 @@ BookingsService.create
       → commit / rollback
 ```
 
-User upsert nằm ngoài transaction booking vì profile là snapshot danh tính, không phải một phần của thao tác giữ phòng. Booking thất bại vẫn giữ profile; luồng HTTP tiếp theo tiếp tục sử dụng cùng UUID theo `keycloak_sub`.
+Lookup user trước transaction chỉ đọc UUID đã tồn tại; thiếu hồ sơ ném `UserNotProvisionedError` (409) trước khi mở transaction booking. User được khởi tạo qua sync hoặc CLI. UUID ổn định và FK `ON DELETE RESTRICT` duy trì liên kết booking; transaction booking không cập nhật profile.
 
 Room access và booking repository được tạo cho từng callback. Chúng kiểm tra transaction active/released trước mỗi thao tác và không được cache hoặc sử dụng sau callback. DataSource, factory và adapter unit of work là singleton; transaction manager không được lưu trong thuộc tính singleton.
 
@@ -145,7 +148,7 @@ Bearer token
   → response interceptor
 ```
 
-`Principal` chứa Keycloak `sub`, profile snapshot và roles đã chuẩn hóa; `users.id` là UUID ứng dụng. Identity xác minh danh tính bằng RS256/JWKS, issuer, audience và loại token. Users chỉ tạo/cập nhật hồ sơ khi use case gọi `getOrSync`; guard không phát sinh truy vấn database.
+`Principal` chứa Keycloak `sub`, profile snapshot, `issuedAt` tùy chọn và roles đã chuẩn hóa; `users.id` là UUID ứng dụng. Identity xác minh danh tính bằng RS256/JWKS, issuer, audience và loại token. Users chỉ tạo/cập nhật hồ sơ qua `sync`; guard không phát sinh truy vấn database. Sync yêu cầu `issuedAt` hợp lệ và cập nhật nguyên tử khi token mới hơn watermark `profile_token_iat`; đọc hồ sơ không yêu cầu `iat`. [Luồng provisioning](user-provisioning.md) mô tả Client sync, retry và bootstrap Admin.
 
 Keycloak sở hữu đăng ký, đăng nhập, password và refresh token. Hai OAuth client Client/Admin dùng Authorization Code + PKCE và cùng API audience. API xác minh access token offline đến khi hết hạn; role lấy từ `resource_access[API_CLIENT_ID].roles`. Admin được phép dùng Client API; quyền Admin API yêu cầu role Admin.
 

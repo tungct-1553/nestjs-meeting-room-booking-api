@@ -7,14 +7,19 @@ const dto = { roomId: 'room-id', title: 'Meeting', startAt: '2099-01-01T10:00:00
 describe('BookingsService', () => {
   const insert = jest.fn().mockImplementation(async (value) => value);
   const lockForBooking = jest.fn();
-  const users = { getOrSync: jest.fn().mockResolvedValue({ id: 'local-user' }) };
+  const users = { requireBySub: jest.fn().mockResolvedValue({ id: 'local-user' }) };
   const uow: BookingUnitOfWork = { run: (work) => work({ rooms: { lockForBooking }, bookings: { insert } }) };
   const service = new BookingsService(users as unknown as UsersService, uow);
   beforeEach(() => { jest.clearAllMocks(); lockForBooking.mockResolvedValue({ id: 'room-id', isActive: true }); });
-  it('takes ownership only from verified principal sync', async () => {
+  it('takes ownership only from provisioned user lookup', async () => {
     await service.create(principal, { ...dto, userId: 'attacker' } as typeof dto);
-    expect(users.getOrSync).toHaveBeenCalledWith(principal);
+    expect(users.requireBySub).toHaveBeenCalledWith(principal.sub);
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ userId: 'local-user' }));
+  });
+  it('does not start booking writes for an unprovisioned identity', async () => {
+    users.requireBySub.mockRejectedValueOnce(new Error('not provisioned'));
+    await expect(service.create(principal, dto)).rejects.toThrow('not provisioned');
+    expect(lockForBooking).not.toHaveBeenCalled(); expect(insert).not.toHaveBeenCalled();
   });
   it('rejects missing or inactive rooms without writes', async () => {
     lockForBooking.mockResolvedValueOnce(null).mockResolvedValueOnce({ id: 'room-id', isActive: false });

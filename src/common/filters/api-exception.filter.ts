@@ -3,6 +3,9 @@ import type { Response } from 'express';
 import { ApplicationError } from '../errors/application.error';
 
 const applicationStatus: Record<string, number> = {
+  USER_NOT_PROVISIONED: 409,
+  INVALID_PROFILE_TOKEN: 401,
+  PROFILE_SYNC_UNAVAILABLE: 503,
   ROOM_UNAVAILABLE: 404,
   ROOM_NOT_FOUND: 404,
   BOOKING_TIME_CONFLICT: 409,
