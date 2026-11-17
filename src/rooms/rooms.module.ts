@@ -1,8 +1,17 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
+import { RoomsService } from './application/rooms.service';
+import { ROOMS_UNIT_OF_WORK } from './application/ports/rooms-unit-of-work.port';
 import { RoomsTransactionFactory } from './infrastructure/public/rooms-transaction.factory';
-import { TypeormRoomRepository } from './infrastructure/typeorm-room.repository';
-import { ROOM_REPOSITORY } from './ports/room-repository.port';
-import { RoomsService } from './rooms.service';
-@Module({ imports: [DatabaseModule], providers: [RoomsService, RoomsTransactionFactory, { provide: ROOM_REPOSITORY, useClass: TypeormRoomRepository }], exports: [RoomsService, RoomsTransactionFactory] })
+import { TypeormRoomsUnitOfWork } from './infrastructure/typeorm-rooms-unit-of-work';
+
+@Module({
+  imports: [DatabaseModule],
+  providers: [
+    RoomsService,
+    RoomsTransactionFactory,
+    { provide: ROOMS_UNIT_OF_WORK, useClass: TypeormRoomsUnitOfWork },
+  ],
+  exports: [RoomsTransactionFactory],
+})
 export class RoomsModule {}

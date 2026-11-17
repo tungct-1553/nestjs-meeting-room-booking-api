@@ -6,7 +6,7 @@ import { AppModule } from './app.module';
 import { configureApp } from './configure-app';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { abortOnError: false });
+  const app = await NestFactory.create(AppModule, { abortOnError: false, bodyParser: false });
   try {
     configureApp(app);
     app.enableShutdownHooks();
@@ -17,6 +17,8 @@ async function bootstrap(): Promise<void> {
   }
 }
 void bootstrap().catch(() => {
-  new Logger('Bootstrap').error('Application startup failed; check configuration and database availability');
+  new Logger('Bootstrap').error(
+    'Application startup failed; check configuration and database availability',
+  );
   process.exitCode = 1;
 });

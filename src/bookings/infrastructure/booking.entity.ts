@@ -1,4 +1,12 @@
-import { Check, Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import {
+  Check,
+  Column,
+  CreateDateColumn,
+  Entity,
+  Index,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 @Entity('bookings')
 @Check('bookings_valid_time', 'start_at < end_at')
 @Check('bookings_valid_status', "status IN ('confirmed', 'cancelled')")

@@ -4,7 +4,7 @@ REST API đặt phòng họp sử dụng NestJS, TypeORM, PostgreSQL và Keycloa
 
 ## Yêu cầu
 
-- Node.js 22+, npm.
+- Node.js 22.13+, npm.
 - Docker Compose.
 
 ## Chạy local
@@ -47,8 +47,12 @@ npm run build
 npm start
 ```
 
+Build xóa `dist` trước khi biên dịch để không giữ module cũ khi thay đổi cấu trúc folder.
+
 ```bash
 npm run typecheck
+npm run lint
+npm run format:check
 npm test
 node scripts/test-bootstrap.mjs
 TEST_DATABASE_URL='<PostgreSQL test URL>' npm run test:integration
@@ -56,11 +60,14 @@ TEST_DATABASE_URL='<PostgreSQL test URL>' npm run test:integration
 
 Integration tests yêu cầu database test riêng với quyền tạo schema/extension. Test bootstrap tự tạo và xóa PostgreSQL container tạm.
 
+`npm run test:architecture` kiểm tra riêng ranh giới layer và module. Dùng `npm run format` để định dạng code và `npm run lint:fix` để sửa các lỗi lint tự động.
+
 ## Tài liệu
 
 - [API contract](docs/requirements.md)
 - [User provisioning](docs/user-provisioning.md)
 - [Kiến trúc](docs/architecture.md)
+- [Quy tắc coding](docs/coding-standards.md)
 - [Database](docs/database.md) · [ERD](docs/database.drawio)
 - [DI và transaction](docs/implementation-patterns.md)
 - [Overview khóa học](docs/overview.md)

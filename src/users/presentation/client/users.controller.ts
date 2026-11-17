@@ -1,26 +1,39 @@
-import { BadRequestException, Body, Controller, Get, HttpCode, Post, Req } from '@nestjs/common';
-import type { Request } from 'express';
-import { ApiBearerAuth, ApiOkResponse, ApiTags } from '@nestjs/swagger';
-import { CurrentPrincipal } from '../../../identity/decorators/current-principal.decorator';
-import { Roles } from '../../../identity/decorators/roles.decorator';
+import { Controller, Get, HttpCode, Post, UseInterceptors } from '@nestjs/common';
+import { ApiBearerAuth, ApiOAuth2, ApiTags } from '@nestjs/swagger';
+import { ApiDataResponse } from '../../../common/http/decorators/api-data-response.decorator';
+import { EmptyBodyInterceptor } from '../../../common/http/interceptors/empty-body.interceptor';
+import { CurrentPrincipal } from '../../../identity/public/http/current-principal.decorator';
+import { Roles } from '../../../identity/public/http/roles.decorator';
 import type { Principal } from '../../../identity/public/principal';
-import { UsersService } from '../../users.service';
+import { UsersService } from '../../application/users.service';
 import { ClientUserResponseDto } from './user-response.dto';
+
 @ApiTags('Client Users')
 @ApiBearerAuth()
+@ApiOAuth2(['openid', 'profile', 'email'])
 @Roles('employee')
 @Controller('client/users')
 export class ClientUsersController {
   constructor(private readonly users: UsersService) {}
+
   @Get('me')
-  @ApiOkResponse({ schema: { type: 'object', properties: { data: { $ref: '#/components/schemas/ClientUserResponseDto' } } } })
-  async me(@CurrentPrincipal() principal: Principal): Promise<ClientUserResponseDto> { return ClientUserResponseDto.from(await this.users.requireBySub(principal.sub)); }
+  @ApiDataResponse(ClientUserResponseDto)
+  async me(@CurrentPrincipal() principal: Principal): Promise<ClientUserResponseDto> {
+    const user = await this.users.requireBySub(principal.sub);
+    return ClientUserResponseDto.from(user);
+  }
+
   @Post('sync')
   @HttpCode(200)
-  @ApiOkResponse({ schema: { type: 'object', properties: { data: { $ref: '#/components/schemas/ClientUserResponseDto' } } } })
-  async sync(@CurrentPrincipal() principal: Principal, @Body() body: unknown, @Req() request: Request): Promise<ClientUserResponseDto> {
-    const unparsedPayload = body === undefined && (Number(request.headers['content-length'] ?? 0) > 0 || request.headers['transfer-encoding'] !== undefined);
-    if (unparsedPayload || body !== undefined && (body === null || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length > 0)) throw new BadRequestException('Request body must be empty');
-    return ClientUserResponseDto.from(await this.users.sync(principal));
+  @UseInterceptors(EmptyBodyInterceptor)
+  @ApiDataResponse(ClientUserResponseDto)
+  async sync(@CurrentPrincipal() principal: Principal): Promise<ClientUserResponseDto> {
+    const user = await this.users.sync({
+      sub: principal.sub,
+      email: principal.email,
+      displayName: principal.displayName,
+      issuedAt: principal.issuedAt,
+    });
+    return ClientUserResponseDto.from(user);
   }
 }

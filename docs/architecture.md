@@ -1,5 +1,7 @@
 # Kiến trúc
 
+Quy tắc layer, dependency và style nằm tại [coding standards](coding-standards.md). Tài liệu này mô tả các module và luồng xử lý đang triển khai.
+
 Ứng dụng sử dụng NestJS modular monolith: một tiến trình API, các feature có ranh giới riêng và giao tiếp qua DI. PostgreSQL lưu dữ liệu ứng dụng; Keycloak quản lý danh tính. Client/Admin là hai giao diện HTTP của cùng hệ thống nghiệp vụ.
 
 ## 1. Ranh giới module
@@ -9,9 +11,9 @@ Module được phân chia theo quyền sở hữu hành vi và dữ liệu. Mod
 | Module | Phạm vi sở hữu | API cho module khác |
 |---|---|---|
 | Identity | Xác minh token, tạo principal và kiểm tra role; không lưu hồ sơ hoặc truy cập repository Users | Kiểu `Principal`, decorators; JWT/Roles guards được đăng ký toàn cục |
-| Users | Hồ sơ ứng dụng trong `users`, ánh xạ Keycloak `sub` sang UUID nội bộ và đồng bộ profile | `UsersService.sync(principal)`, `findBySub(sub)`, `requireBySub(sub)` |
-| Rooms | Dữ liệu `rooms`, thao tác deactivate và truy cập phòng có khóa | `RoomsService.deactivate(id)`; `RoomsBookingAccess` qua `RoomsTransactionFactory` |
-| Bookings | Dữ liệu `bookings`, use case tạo booking, kiểm tra phòng/thời gian và điều phối transaction | `BookingsService.create(principal, dto)` |
+| Users | Hồ sơ ứng dụng trong `users`, ánh xạ Keycloak `sub` sang UUID nội bộ và đồng bộ profile | `UsersQueryApi.requireBySub(sub)` qua token `USERS_QUERY_API` |
+| Rooms | Dữ liệu `rooms`, use case deactivate và truy cập phòng có khóa | `RoomsBookingAccess` qua `RoomsTransactionFactory` |
+| Bookings | Dữ liệu `bookings`, use case tạo booking, kiểm tra phòng/thời gian và điều phối transaction | Chưa export API cho module khác |
 | Database | Khởi tạo DataSource/pool, cấu hình persistence, lifecycle và migration | Provider `DataSource` |
 | Health | Liveness và database readiness | Controller health/readiness |
 
@@ -28,7 +30,7 @@ flowchart LR
     Identity --> Keycloak
 ```
 
-Các mũi tên nội bộ thể hiện Nest module import; Identity truy cập Keycloak qua JWKS. Feature cũng có thể import kiểu TypeScript công khai, ví dụ Users nhận `Principal` từ Identity; việc đó không tạo thêm provider hoặc Nest module dependency.
+Các mũi tên nội bộ thể hiện Nest module import; Identity truy cập Keycloak qua JWKS. Controller dùng `Principal` và decorator công khai của Identity để tạo input thuần cho application. Import các kiểu/decorator này không tạo thêm Nest module dependency.
 
 ## 2. Phân lớp trong feature
 
@@ -37,14 +39,17 @@ Users thể hiện cách tổ chức một feature:
 ```text
 users/
 ├── users.module.ts
-├── users.service.ts
+├── application/
+│   ├── users.service.ts
+│   ├── inputs/sync-user.input.ts
+│   ├── errors/user.errors.ts
+│   └── ports/user-repository.port.ts
 ├── presentation/
 │   ├── client/                 # Client controller và response DTO
 │   └── admin/                  # Admin controller và response DTO
 ├── public/
-│   └── user.ts                 # Kiểu dữ liệu công khai
-├── ports/
-│   └── user-repository.port.ts # Contract persistence và DI token
+│   ├── user.ts                 # Model thuần
+│   └── users-query.api.ts      # Interface đọc và DI token công khai
 └── infrastructure/
     ├── user.entity.ts
     └── typeorm-user.repository.ts
@@ -53,12 +58,12 @@ users/
 | Thành phần | Trách nhiệm | Dependency |
 |---|---|---|
 | Presentation | Routing, lấy principal, nhận/validate DTO và map response DTO | Application service, contract Identity |
-| Application service | Thực thi use case, kiểm tra điều kiện nghiệp vụ và phối hợp feature | Port hoặc service công khai của feature khác |
+| Application service | Thực thi use case, kiểm tra điều kiện nghiệp vụ và phối hợp feature | Port hoặc public interface của feature khác |
 | Port | Mô tả thao tác mà service cần, bằng input/output nghiệp vụ | Kiểu dữ liệu của feature hoặc contract công khai |
 | Infrastructure adapter | Triển khai port bằng TypeORM; truy vấn, mapping entity và xử lý lỗi persistence | Port, entity nội bộ, DataSource/EntityManager |
 | Nest module | Đăng ký provider, nối port với adapter và export API cần dùng | Các module cung cấp dependency |
 
-Nghiệp vụ hiện nằm trong application service; entity là mapping persistence. Không coi ORM entity là response model hoặc dùng entity xuyên module. Service Users/Rooms/Bookings không import `DataSource` hoặc `EntityManager`; các kiểu này chỉ xuất hiện ở tầng persistence. Health truy vấn DataSource trực tiếp vì readiness là kiểm tra hạ tầng.
+Service là điểm vào use case; entity là mapping persistence. Application nhận input thuần, không nhận HTTP DTO hoặc `Principal`. Service Users/Rooms/Bookings không import `DataSource` hoặc `EntityManager`; các kiểu này chỉ xuất hiện ở tầng persistence. ORM entity không dùng làm response model hoặc truyền xuyên module. Health truy vấn DataSource trực tiếp vì readiness là kiểm tra hạ tầng.
 
 ### Client và Admin
 
@@ -70,32 +75,31 @@ Role được kiểm tra ở guard trước khi gọi controller. Quy tắc dữ
 
 Port thuộc module sở hữu hành vi: `UserReadRepositoryPort` và `UserSyncRepositoryPort` thuộc Users, `RoomsBookingAccess` thuộc Rooms, `BookingUnitOfWork` thuộc Bookings. Các repository port nội bộ không phải API cho module khác.
 
-Module nối interface với adapter bằng DI token. Ví dụ Users:
+Module nối interface với adapter bằng DI token. Hai port đọc/ghi nội bộ của Users dùng chung `TypeormUserRepository` qua `useExisting`. API cho module khác chỉ cung cấp thao tác đọc:
 
 ```ts
 // users.module.ts
 providers: [
   UsersService,
-  TypeormUserRepository,
-  { provide: USER_READ_REPOSITORY, useExisting: TypeormUserRepository },
-  { provide: USER_SYNC_REPOSITORY, useExisting: TypeormUserRepository },
+  // Các binding repository nội bộ được lược bỏ.
+  { provide: USERS_QUERY_API, useExisting: UsersService },
 ],
-exports: [UsersService],
+exports: [USERS_QUERY_API],
 
-// users.service.ts
+// BookingsService
 constructor(
-  @Inject(USER_READ_REPOSITORY) private readonly reader: UserReadRepositoryPort,
-  @Inject(USER_SYNC_REPOSITORY) private readonly writer: UserSyncRepositoryPort,
+  @Inject(USERS_QUERY_API) private readonly users: UsersQueryApi,
+  @Inject(BOOKING_UNIT_OF_WORK) private readonly uow: BookingUnitOfWork,
 ) {}
 ```
 
-Ở runtime, Nest inject adapter đã đăng ký. Service phụ thuộc contract; test có thể thay provider qua token. Module khác import `UsersModule` và inject `UsersService`, không inject `TypeormUserRepository` hoặc token repository nội bộ.
+Ở runtime, Nest inject implementation đã đăng ký. Bookings import `UsersModule` và inject token `USERS_QUERY_API`; không phụ thuộc concrete service, repository hoặc quyền sync. Không có lớp facade chuyển tiếp: Users service trực tiếp triển khai interface đọc.
 
 Có hai hình thức giao tiếp:
 
 | Trường hợp | Contract | Ví dụ |
 |---|---|---|
-| Gọi một use case độc lập | Service công khai, không có kiểu ORM | Bookings gọi `UsersService.requireBySub` trước transaction |
+| Gọi một thao tác độc lập | Public interface và token, không có kiểu ORM | Bookings gọi `UsersQueryApi.requireBySub` trước transaction |
 | Phối hợp persistence trong một transaction | Port nghiệp vụ và factory tích hợp công khai ở infrastructure | Adapter unit of work gọi `RoomsTransactionFactory.bind(manager)` |
 
 `RoomsTransactionFactory` nhận `EntityManager` và trả `RoomsBookingAccess`. Bookings chỉ nhận thao tác `lockForBooking`; `RoomEntity` vẫn nằm trong Rooms. Chỉ infrastructure của Bookings được sử dụng factory có kiểu TypeORM, còn application service nhận các port qua callback unit of work.
@@ -108,17 +112,21 @@ Có hai hình thức giao tiếp:
 
 ```text
 BookingsService.create
-  → UsersService.requireBySub(principal.sub) → users.id
+  → UsersQueryApi.requireBySub(input.actorSub) → users.id
   → BookingUnitOfWork.run(callback)
       → mở transaction READ COMMITTED
       → tạo Rooms access và booking repository với cùng manager
       → khóa dòng phòng, kiểm tra active
       → kiểm tra startAt/endAt sau khi chờ khóa
-      → insert booking
+      → insert booking với status confirmed do application chọn
       → commit / rollback
 ```
 
-Lookup user trước transaction chỉ đọc UUID đã tồn tại; thiếu hồ sơ ném `UserNotProvisionedError` (409) trước khi mở transaction booking. User được khởi tạo qua sync hoặc CLI. UUID ổn định và FK `ON DELETE RESTRICT` duy trì liên kết booking; transaction booking không cập nhật profile.
+Lookup user trước transaction chỉ đọc UUID đã tồn tại; thiếu hồ sơ ném `UserNotProvisionedError` (409) trước khi mở transaction booking. User được khởi tạo qua sync hoặc CLI. UUID ổn định và FK `ON DELETE RESTRICT` duy trì liên kết booking; transaction booking không cập nhật profile. Input booking chứa `Date`, không chứa request DTO; adapter HTTP/CLI chịu trách nhiệm parse dữ liệu đầu vào.
+
+`RoomsService.deactivate` cũng điều phối UoW: lấy phòng có khóa, ném `RoomNotFoundError` nếu không tồn tại, rồi yêu cầu `setActive(id, false)`. Repository chỉ đọc/ghi trạng thái bằng manager được bind. Phòng đã inactive vẫn được xử lý thành công; deactivate không hủy booking đã có.
+
+Sync user là một thao tác persistence nguyên tử qua `upsertIfNewer`. Adapter tự mở transaction để upsert và SELECT fallback khi token cũ/cùng phiên bản; không thêm UoW ngoài tại service. Quy tắc watermark là contract application, điều kiện so sánh được thực thi trong SQL để không mất tính nguyên tử khi có request đồng thời.
 
 Room access và booking repository được tạo cho từng callback. Chúng kiểm tra transaction active/released trước mỗi thao tác và không được cache hoặc sử dụng sau callback. DataSource, factory và adapter unit of work là singleton; transaction manager không được lưu trong thuộc tính singleton.
 
@@ -135,26 +143,31 @@ Khóa dòng tuần tự hóa mọi booking cùng phòng, kể cả các khoảng
 
 Exclusion constraint `bookings_no_overlap` bảo vệ quy tắc khoảng thời gian `[startAt, endAt)` tại database, kể cả khi có thao tác ghi ngoài luồng khóa phòng. Khóa dòng phòng bảo vệ trạng thái phòng; constraint bảo vệ lịch. Chi tiết biểu thức và index nằm trong [database.md](database.md).
 
-Unit of work chuyển riêng lỗi PostgreSQL `23P01` của constraint này thành `BookingTimeConflictError` sau khi transaction rollback. Lỗi khác được ném tiếp. Exception filter ánh xạ lỗi nghiệp vụ sang HTTP status và error envelope; service không phụ thuộc HTTP exception.
+Unit of work chuyển riêng lỗi PostgreSQL `23P01` của constraint này thành `BookingTimeConflictError` bên ngoài lời gọi transaction. Lỗi khác được ném tiếp. Exception filter ánh xạ `ApplicationError.kind` sang HTTP status và giữ mã lỗi của feature; service không phụ thuộc HTTP exception. Mất kết nối lúc commit có thể chưa xác định được kết quả; không mặc định mọi lỗi là rollback thành công.
 
 ## 5. Identity và HTTP boundary
 
 ```text
-Bearer token
+HTTP request
+  → request logging / CORS / payload parser
   → JwtAuthGuard / JwtStrategy: xác minh token, tạo Principal
   → RolesGuard: kiểm tra role của route
-  → validation pipe / controller
+  → EmptyBodyInterceptor của sync / validation pipe / controller
   → application service / persistence
   → response interceptor
 ```
 
-`Principal` chứa Keycloak `sub`, profile snapshot, `issuedAt` tùy chọn và roles đã chuẩn hóa; `users.id` là UUID ứng dụng. Identity xác minh danh tính bằng RS256/JWKS, issuer, audience và loại token. Users chỉ tạo/cập nhật hồ sơ qua `sync`; guard không phát sinh truy vấn database. Sync yêu cầu `issuedAt` hợp lệ và cập nhật nguyên tử khi token mới hơn watermark `profile_token_iat`; đọc hồ sơ không yêu cầu `iat`. [Luồng provisioning](user-provisioning.md) mô tả Client sync, retry và bootstrap Admin.
+`Principal` chứa Keycloak `sub`, profile snapshot, `issuedAt` tùy chọn và roles đã chuẩn hóa; chỉ presentation sử dụng principal để tạo input. `users.id` là UUID ứng dụng. Identity xác minh danh tính bằng RS256/JWKS, issuer, audience và loại token. Users chỉ tạo/cập nhật hồ sơ qua `sync`; guard không phát sinh truy vấn database. Identity và Users dùng chung validator NumericDate; đọc hồ sơ không yêu cầu `iat`. [Luồng provisioning](user-provisioning.md) mô tả watermark, Client sync, retry và bootstrap Admin.
 
 Keycloak sở hữu đăng ký, đăng nhập, password và refresh token. Hai OAuth client Client/Admin dùng Authorization Code + PKCE và cùng API audience. API xác minh access token offline đến khi hết hạn; role lấy từ `resource_access[API_CLIENT_ID].roles`. Admin được phép dùng Client API; quyền Admin API yêu cầu role Admin.
 
 `JwtAuthGuard` và `RolesGuard` đăng ký toàn cục, authentication chạy trước authorization. `@Public()` bỏ qua cả hai; health và Swagger public. Thiếu/sai token trả 401, thiếu role trả 403; không lấy được JWKS và không có key cache khả dụng trả 503.
 
-`common/` cung cấp response interceptor, exception filter và request logging. Request ID theo suốt response/log; log không chứa token hoặc body. Các quy ước wire format nằm trong [API contract](requirements.md).
+Bootstrap tắt parser mặc định của Nest bằng `bodyParser: false`; `configureApp` sở hữu pipeline parser. CORS được gắn trực tiếp qua HTTP adapter trước parser để response lỗi parse vẫn có CORS header cho origin được phép.
+
+Controller sync dùng `EmptyBodyInterceptor`, không kiểm tra header/body trực tiếp. Parser thu nhận kích thước payload; middleware của route đọc payload không thuộc media type được parser hỗ trợ. Các nhánh dùng cùng giới hạn 100 KiB. Interceptor chấp nhận payload rỗng hoặc JSON `{}`; header chunked không được dùng để kết luận body có dữ liệu. Lỗi cú pháp, giới hạn hoặc encoding được parser xử lý trước interceptor, giữ status client error và message an toàn.
+
+`common/application/` chứa error contract thuần; `common/validation/` chứa validator dùng chung; `common/http/` cung cấp response interceptor, exception filter và request logging. Request ID theo suốt response/log; log không chứa token, body hoặc SQL. Response metadata đặt tại controller, cấu hình Swagger ở `src/http/swagger.ts`. Các quy ước wire format nằm trong [API contract](requirements.md).
 
 ## 6. Persistence và vận hành
 

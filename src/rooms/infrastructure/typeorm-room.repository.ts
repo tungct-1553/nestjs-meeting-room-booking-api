@@ -1,17 +1,30 @@
-import { Inject, Injectable } from '@nestjs/common';
-import { DataSource } from 'typeorm';
-import type { RoomRepositoryPort } from '../ports/room-repository.port';
-import { RoomNotFoundError } from '../errors/room.errors';
+import type { EntityManager } from 'typeorm';
+import type { RoomSnapshot } from '../application/models/room-snapshot';
+import type { RoomTransactionRepositoryPort } from '../application/ports/room-repository.port';
 import { RoomEntity } from './room.entity';
-@Injectable()
-export class TypeormRoomRepository implements RoomRepositoryPort {
-  constructor(@Inject(DataSource) private readonly source: DataSource) {}
-  async deactivate(roomId: string): Promise<void> {
-    await this.source.transaction('READ COMMITTED', async (manager) => {
-      const repository = manager.getRepository(RoomEntity);
-      const room = await repository.findOne({ where: { id: roomId }, lock: { mode: 'pessimistic_write' } });
-      if (!room) throw new RoomNotFoundError();
-      await repository.update(room.id, { isActive: false });
+
+export class TypeormRoomRepository implements RoomTransactionRepositoryPort {
+  constructor(private readonly manager: EntityManager) {
+    this.assertActive();
+  }
+
+  async lockById(id: string): Promise<RoomSnapshot | null> {
+    this.assertActive();
+    const room = await this.manager.getRepository(RoomEntity).findOne({
+      where: { id },
+      lock: { mode: 'pessimistic_write' },
     });
+    return room ? { id: room.id, isActive: room.isActive } : null;
+  }
+
+  async setActive(id: string, isActive: boolean): Promise<void> {
+    this.assertActive();
+    await this.manager.getRepository(RoomEntity).update(id, { isActive });
+  }
+
+  private assertActive(): void {
+    if (!this.manager.queryRunner?.isTransactionActive || this.manager.queryRunner.isReleased) {
+      throw new Error('Room access requires an active transaction');
+    }
   }
 }

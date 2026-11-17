@@ -1,111 +1,145 @@
 # DI và transaction
 
-Các ví dụ dưới là phần trích từ implementation, lược bỏ import và decorator không liên quan. Ranh giới module và thứ tự nghiệp vụ được mô tả trong [architecture.md](architecture.md); tài liệu này tập trung vào cách sử dụng các contract trong code.
+Các ví dụ trích từ implementation, lược bỏ import và các provider không liên quan. [Coding standards](coding-standards.md) quy định dependency được phép; [architecture](architecture.md) mô tả quyền sở hữu module và luồng nghiệp vụ.
 
-## 1. Đăng ký DataSource và lifecycle
+## 1. Kết nối và vòng đời pool
 
-[DatabaseModule](../src/database/database.module.ts) đăng ký DataSource bằng async provider. Nest chờ kết nối initialize trước khi inject provider vào adapter; các feature import cùng DatabaseModule để dùng chung pool.
+[DatabaseModule](../src/database/database.module.ts) cung cấp một DataSource singleton cho tiến trình API. Async provider hoàn tất initialize trước khi Nest inject dependency:
 
 ```ts
 {
   provide: DataSource,
   inject: [ConfigService],
-  useFactory: (config: ConfigService) => new DataSource(databaseOptions(
-    config.getOrThrow<string>('DATABASE_URL'),
-    config.getOrThrow<number>('DB_POOL_MAX'),
-  )).initialize(),
+  useFactory: (config: ConfigService) =>
+    new DataSource(databaseOptions(
+      config.getOrThrow<string>('DATABASE_URL'),
+      config.getOrThrow<number>('DB_POOL_MAX'),
+    )).initialize(),
 }
 ```
 
-Module đăng ký thêm [DatabaseLifecycle](../src/database/database.lifecycle.ts); provider này inject DataSource và đóng pool qua shutdown hook:
+Các feature import cùng DatabaseModule; không tạo pool riêng trong service/repository. [DatabaseLifecycle](../src/database/database.lifecycle.ts) đóng pool khi shutdown:
 
 ```ts
 async onApplicationShutdown(): Promise<void> {
-  if (this.source.isInitialized) await this.source.destroy();
-}
-
-// main.ts
-app.enableShutdownHooks();
-```
-
-`databaseOptions` dùng chung cho API và TypeORM CLI. CLI chạy trong tiến trình riêng; vòng đời kết nối được mô tả tại [database.md](database.md#migration-và-kết-nối).
-
-## 2. Đăng ký adapter cho port
-
-Users tách port đọc khỏi port đồng bộ; input persistence không chứa token, role hoặc kiểu ORM:
-
-```ts
-export const USER_READ_REPOSITORY = Symbol('USER_READ_REPOSITORY');
-export const USER_SYNC_REPOSITORY = Symbol('USER_SYNC_REPOSITORY');
-
-export interface UserReadRepositoryPort {
-  findBySub(sub: string): Promise<User | null>;
-}
-export interface ProfileSyncInput {
-  sub: string;
-  email: string | null;
-  displayName: string | null;
-  issuedAt: number;
-}
-export interface UserSyncRepositoryPort {
-  sync(input: ProfileSyncInput): Promise<User>;
+  if (this.source.isInitialized) {
+    await this.source.destroy();
+  }
 }
 ```
 
-`useExisting` nối hai token với cùng một adapter singleton. Module chỉ export service cho feature khác:
+`main.ts` bật shutdown hooks. TypeORM CLI dùng cùng cấu hình trong tiến trình riêng; quy tắc migration và schema tại [database.md](database.md#migration-và-kết-nối).
+
+## 2. Port nội bộ và API công khai
+
+Users dùng hai port nội bộ cho đọc và đồng bộ. Hai token cùng trỏ tới một adapter singleton bằng `useExisting`:
 
 ```ts
+// Phần providers/exports của UsersModule.
 providers: [
   UsersService,
   TypeormUserRepository,
   { provide: USER_READ_REPOSITORY, useExisting: TypeormUserRepository },
   { provide: USER_SYNC_REPOSITORY, useExisting: TypeormUserRepository },
+  { provide: USERS_QUERY_API, useExisting: UsersService },
 ],
-exports: [UsersService],
+exports: [USERS_QUERY_API],
+```
 
-// UsersService
+[UsersQueryApi](../src/users/public/users-query.api.ts) là interface đọc cho module khác, không phải repository:
+
+```ts
+export const USERS_QUERY_API = Symbol('USERS_QUERY_API');
+
+export interface UsersQueryApi {
+  requireBySub(sub: string): Promise<User>;
+}
+
+// Constructor của BookingsService.
 constructor(
-  @Inject(USER_READ_REPOSITORY) private readonly reader: UserReadRepositoryPort,
-  @Inject(USER_SYNC_REPOSITORY) private readonly writer: UserSyncRepositoryPort,
+  @Inject(USERS_QUERY_API) private readonly users: UsersQueryApi,
+  @Inject(BOOKING_UNIT_OF_WORK) private readonly uow: BookingUnitOfWork,
 ) {}
+```
 
-async requireBySub(sub: string) {
-  const user = await this.reader.findBySub(sub);
-  if (!user) throw new UserNotProvisionedError();
-  return user;
+`User`, interface và token được import từ `users/public/`. BookingsModule import UsersModule để Nest resolve token. Users service trực tiếp triển khai interface; không có facade chuyển tiếp. Token repository và concrete Users service không được export.
+
+`requireBySub` chỉ đọc, ném `UserNotProvisionedError` khi không có hồ sơ. Bookings hoàn tất lookup này trước transaction booking; không gọi Users service trong callback rồi giả định query tự tham gia transaction hiện tại.
+
+## 3. HTTP input và đồng bộ hồ sơ
+
+[ClientUsersController](../src/users/presentation/client/users.controller.ts) map principal sang input thuần và trả response DTO:
+
+```ts
+@Post('sync')
+@HttpCode(200)
+@UseInterceptors(EmptyBodyInterceptor)
+@ApiDataResponse(ClientUserResponseDto)
+async sync(@CurrentPrincipal() principal: Principal): Promise<ClientUserResponseDto> {
+  const user = await this.users.sync({
+    sub: principal.sub,
+    email: principal.email,
+    displayName: principal.displayName,
+    issuedAt: principal.issuedAt,
+  });
+
+  return ClientUserResponseDto.from(user);
 }
 ```
 
-Interface dùng `import type`; token dùng value import để tồn tại ở runtime. Service sync kiểm tra `Principal.issuedAt`, rồi truyền profile cùng watermark vào port ghi. Adapter dùng `INSERT ... ON CONFLICT ... DO UPDATE ... WHERE` trong transaction `READ COMMITTED`:
+Controller không nhận body hoặc request để kiểm tra payload. JSON/form parser thu nhận kích thước body; raw middleware của route sync đọc media type chưa được parser xử lý. Cả hai dùng giới hạn 100 KiB. [EmptyBodyInterceptor](../src/common/http/interceptors/empty-body.interceptor.ts) kiểm tra payload thực tế, chấp nhận request rỗng hoặc JSON `{}`; không suy luận sự tồn tại dữ liệu từ header chunked.
+
+[UsersService](../src/users/application/users.service.ts) nhận `SyncUserInput`, không nhận `Principal`. Service kiểm tra `issuedAt` bằng validator NumericDate dùng chung rồi gọi port ghi:
+
+```ts
+export interface UserSyncRepositoryPort {
+  upsertIfNewer(input: ProfileSyncInput): Promise<User>;
+}
+```
+
+[TypeormUserRepository](../src/users/infrastructure/typeorm-user.repository.ts) thực thi contract bằng upsert có điều kiện:
 
 ```sql
+ON CONFLICT (keycloak_sub) DO UPDATE SET
+  email = EXCLUDED.email,
+  display_name = EXCLUDED.display_name,
+  profile_token_iat = EXCLUDED.profile_token_iat,
+  updated_at = now()
 WHERE users.profile_token_iat IS NULL
    OR users.profile_token_iat < EXCLUDED.profile_token_iat
 ```
 
-Token cùng/cũ hơn không cập nhật snapshot hoặc timestamp. Khi `RETURNING` không có dòng, adapter SELECT hồ sơ hiện tại trong cùng transaction. Upsert đã chờ/giữ khóa conflict; SELECT dùng snapshot mới của `READ COMMITTED` nên đọc được cả dòng do request đồng thời vừa insert. Chi tiết contract nằm tại [user-provisioning.md](user-provisioning.md).
+Adapter tự mở transaction `READ COMMITTED` cho thao tác này. Khi `RETURNING` không có row, SELECT fallback dùng snapshot mới trong cùng transaction; khóa conflict được giữ đến khi hoàn tất. Không chuyển thành SELECT rồi so sánh/UPDATE ở service. Bảo đảm UUID, watermark và retry tại [user provisioning](user-provisioning.md#3-contract-đồng-bộ).
 
-## 3. Gọi service của module khác
+## 4. Rooms: nghiệp vụ trong callback, SQL trong adapter
 
-[BookingsModule](../src/bookings/bookings.module.ts) import `UsersModule`; [BookingsService](../src/bookings/bookings.service.ts) inject service được export:
+[RoomsService](../src/rooms/application/rooms.service.ts) nhận UoW qua token `ROOMS_UNIT_OF_WORK`. Service quyết định hành vi khi thiếu phòng:
 
 ```ts
-constructor(
-  private readonly users: UsersService,
-  @Inject(BOOKING_UNIT_OF_WORK) private readonly uow: BookingUnitOfWork,
-) {}
-
-// Trong create(principal, dto)
-const user = await this.users.requireBySub(principal.sub);
+async deactivate(roomId: string): Promise<void> {
+  await this.uow.run(async ({ rooms }) => {
+    const room = await rooms.lockById(roomId);
+    if (room === null) {
+      throw new RoomNotFoundError();
+    }
+    await rooms.setActive(room.id, false);
+  });
+}
 ```
 
-Kết quả `user.id` là UUID ứng dụng. Thiếu hồ sơ trả lỗi `USER_NOT_PROVISIONED`; caller không tạo user hoặc cập nhật profile trong luồng này. Lời gọi này hoàn tất trước transaction booking; adapter Users truy vấn qua DataSource dùng chung, ngoài transaction booking và không tham gia callback unit of work.
+[TypeormRoomsUnitOfWork](../src/rooms/infrastructure/typeorm-rooms-unit-of-work.ts) mở transaction và tạo repository cho callback:
 
-Không gọi service này giữa callback rồi giả định các query của nó tự dùng transaction manager hiện tại. Tham gia transaction phải đi qua contract được bind manager tường minh như phần dưới.
+```ts
+return this.source.transaction('READ COMMITTED', (manager) =>
+  work({ rooms: new TypeormRoomRepository(manager) }),
+);
+```
 
-## 4. Bind persistence vào transaction
+Repository chỉ thực hiện `lockById` và `setActive` bằng manager được bind; không ném lỗi phòng không tồn tại hoặc tự mở transaction. Thiếu row được biểu diễn bằng `null`. Deactivate phòng đã inactive vẫn thành công, không hủy booking đã có.
 
-[BookingUnitOfWork](../src/bookings/ports/booking-unit-of-work.port.ts) cung cấp bộ thao tác cho callback nghiệp vụ:
+## 5. Bookings: transaction liên module
+
+[BookingUnitOfWork](../src/bookings/application/ports/booking-unit-of-work.port.ts) cung cấp hai contract persistence cho callback:
 
 ```ts
 export interface BookingTransaction {
@@ -118,100 +152,61 @@ export interface BookingUnitOfWork {
 }
 ```
 
-Token `BOOKING_UNIT_OF_WORK` được đăng ký với `TypeormBookingUnitOfWork` trong Bookings. Adapter inject DataSource singleton và factory persistence công khai của Rooms. Khi mở transaction, nó tạo hai đối tượng mới gắn cùng manager:
+[TypeormBookingUnitOfWork](../src/bookings/infrastructure/typeorm-booking-unit-of-work.ts) tạo hai đối tượng dùng chung manager:
 
 ```ts
-return await this.source.transaction('READ COMMITTED', (manager) => work({
-  rooms: this.roomsFactory.bind(manager),
-  bookings: new TypeormBookingRepository(manager),
-}));
+return await this.source.transaction('READ COMMITTED', (manager) =>
+  work({
+    rooms: this.roomsFactory.bind(manager),
+    bookings: new TypeormBookingRepository(manager),
+  }),
+);
 ```
 
-`RoomsTransactionFactory` là singleton nhưng không giữ manager trong thuộc tính. `bind` tạo closure cho từng transaction; lời gọi `lockForBooking` dùng manager được capture:
+[RoomsTransactionFactory](../src/rooms/infrastructure/public/rooms-transaction.factory.ts) thuộc infrastructure của Rooms. Factory bind `TypeormRoomRepository` và chỉ công bố `lockForBooking`; application Bookings không thấy entity hoặc manager. Đây là điểm tích hợp persistence tường minh giữa hai module dùng cùng PostgreSQL/TypeORM.
+
+[BookingsService](../src/bookings/application/bookings.service.ts) nhận `CreateBookingInput` chứa `actorSub` và `Date`; adapter HTTP/CLI parse dữ liệu trước khi gọi. Sau lookup user, service thực hiện:
 
 ```ts
-bind(manager: EntityManager): RoomsBookingAccess {
-  const assertActive = () => {
-    if (!manager.queryRunner?.isTransactionActive || manager.queryRunner.isReleased) {
-      throw new Error('Room access requires an active transaction');
-    }
-  };
-  assertActive();
-  return {
-    lockForBooking: async (roomId) => {
-      assertActive();
-      const room = await manager.getRepository(RoomEntity).findOne({
-        where: { id: roomId },
-        lock: { mode: 'pessimistic_write' },
-      });
-      return room ? { id: room.id, isActive: room.isActive } : null;
-    },
-  };
-}
-```
-
-Đoạn truy vấn biết `RoomEntity` vẫn thuộc infrastructure của Rooms. Callback Bookings chỉ thấy `RoomsBookingAccess`. Booking repository cũng kiểm tra active/released trước insert và lấy repository từ manager được truyền vào constructor. Các đối tượng này không được đăng ký singleton hoặc giữ lại sau callback.
-
-Implementation: [RoomsTransactionFactory](../src/rooms/infrastructure/public/rooms-transaction.factory.ts) và [TypeormBookingRepository](../src/bookings/infrastructure/typeorm-booking.repository.ts).
-
-## 5. Sử dụng callback trong application service
-
-Sau bước đọc user, service tạo `Date` từ input và thực hiện nghiệp vụ qua các port:
-
-```ts
-const startAt = new Date(dto.startAt);
-const endAt = new Date(dto.endAt);
-
 return this.uow.run(async ({ rooms, bookings }) => {
-  const room = await rooms.lockForBooking(dto.roomId);
-  if (!room?.isActive) throw new RoomUnavailableError();
-  if (!Number.isFinite(startAt.getTime()) || !Number.isFinite(endAt.getTime())
-    || startAt.getTime() <= Date.now() || startAt >= endAt) {
+  const room = await rooms.lockForBooking(input.roomId);
+  if (room === null || !room.isActive) {
+    throw new RoomUnavailableError();
+  }
+  if (!isValidBookingTime(input.startAt, input.endAt, Date.now())) {
     throw new InvalidBookingTimeError();
   }
   return bookings.insert({
-    roomId: room.id, userId: user.id, title: dto.title, startAt, endAt,
+    roomId: room.id,
+    userId: user.id,
+    title: input.title,
+    startAt: input.startAt,
+    endAt: input.endAt,
+    status: 'confirmed',
   });
 });
 ```
 
-Kiểm tra thời gian nằm sau `lockForBooking`, vì request có thể chờ khóa đến khi thời điểm bắt đầu không còn ở tương lai. Input `userId` được lấy từ kết quả Users service, không sao chép từ DTO. Callback trả `Booking`; application service không nhận `EntityManager` hoặc trả ORM entity.
+Thời gian được kiểm tra sau row lock vì request có thể phải chờ đến khi startAt không còn ở tương lai. Application chọn trạng thái; repository không tự gán `confirmed`. Row lock bảo vệ trạng thái phòng; exclusion constraint bảo vệ lịch trùng, kể cả ghi ngoài use case.
 
-## 6. Chuyển lỗi persistence sau rollback
+Repository Rooms/Bookings kiểm tra manager còn active trước thao tác. Không giữ chúng ngoài callback, đăng ký singleton hoặc dùng DataSource để ghi ngoài manager đang bind.
 
-[TypeormBookingUnitOfWork](../src/bookings/infrastructure/typeorm-booking-unit-of-work.ts) đặt `try/catch` bên ngoài `await source.transaction(...)`. TypeORM rollback khi callback ném lỗi; sau đó adapter mới chuyển lỗi constraint đã biết:
+## 6. Chuyển lỗi persistence và response HTTP
+
+Booking UoW bắt lỗi bên ngoài `await source.transaction(...)` và chỉ chuyển constraint đã biết:
 
 ```ts
-catch (error) {
-  if (error instanceof QueryFailedError) {
-    const pg = error.driverError as { code?: string; constraint?: string };
-    if (pg.code === '23P01' && pg.constraint === 'bookings_no_overlap') {
-      throw new BookingTimeConflictError();
-    }
+if (error instanceof QueryFailedError) {
+  const pg = error.driverError as { code?: string; constraint?: string };
+  if (pg.code === '23P01' && pg.constraint === 'bookings_no_overlap') {
+    throw new BookingTimeConflictError({ cause: error });
   }
-  throw error;
 }
+throw error;
 ```
 
-Cần kiểm tra cả SQLSTATE và tên constraint để không biến lỗi database khác thành lỗi trùng lịch. Không bắt lỗi insert rồi tiếp tục callback như thể transaction thành công. Lỗi nghiệp vụ được exception filter ánh xạ sang HTTP; adapter không tạo `ConflictException` hoặc tự ghi response.
+Lỗi khác được ném tiếp. Không bắt lỗi insert rồi tiếp tục transaction. `cause` giữ thông tin chẩn đoán nội bộ; HTTP response không chứa SQL, token hoặc driver error.
 
-## 7. Map response ở HTTP boundary
+Application error định nghĩa `code` và `kind`, không có HTTP status. [ApiExceptionFilter](../src/common/http/filters/api-exception.filter.ts) map `kind` sang status; không liệt kê từng mã lỗi feature. Ví dụ `USER_NOT_PROVISIONED` thuộc kind `conflict` nên trả 409; lỗi không dự kiến trả 500 với message chung.
 
-Controller hồ sơ nhận principal qua decorator, gọi service và map kiểu `User` sang response DTO riêng của namespace:
-
-```ts
-async me(@CurrentPrincipal() principal: Principal): Promise<ClientUserResponseDto> {
-  return ClientUserResponseDto.from(await this.users.requireBySub(principal.sub));
-}
-```
-
-Handler trả DTO trực tiếp; response interceptor tạo `{ data: dto }`. Không bọc thêm `{ data }` trong controller. Admin controller dùng cùng service, nhưng map sang `AdminUserResponseDto`.
-
-Danh sách dùng `PaginatedResponse<T>` để interceptor phân biệt với một đối tượng nghiệp vụ thông thường:
-
-```ts
-return new PaginatedResponse(rows, { page, limit, total });
-// JSON: { data: rows, meta: { page, limit, total } }
-```
-
-Health dùng `RawResponse`; HTTP 204 giữ body rỗng. Cấu trúc success/error response và status code được quản lý tại [API contract](requirements.md).
+Controller chỉ map model thuần sang response DTO. `ApiDataResponse(Model)` đăng ký model/envelope cho Swagger; response interceptor bọc `{ data }` một lần. Danh sách được presentation chuyển sang `PaginatedResponse`; Health dùng raw response và HTTP 204 giữ body rỗng. Wire format tại [API contract](requirements.md).

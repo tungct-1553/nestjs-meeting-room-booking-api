@@ -24,7 +24,9 @@ export class InitialSchema1794700000000 implements MigrationInterface {
       CONSTRAINT bookings_no_overlap EXCLUDE USING gist
         (room_id WITH =, tstzrange(start_at, end_at, '[)') WITH &&) WHERE (status = 'confirmed')
     )`);
-    await queryRunner.query('CREATE INDEX bookings_user_created_id ON bookings (user_id, created_at, id)');
+    await queryRunner.query(
+      'CREATE INDEX bookings_user_created_id ON bookings (user_id, created_at, id)',
+    );
   }
   async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query('DROP TABLE bookings');

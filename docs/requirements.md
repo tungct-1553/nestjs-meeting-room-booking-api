@@ -68,11 +68,11 @@ Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong env
 |---|---|---|---|
 | GET | `/health` | Public | 200 raw health |
 | GET | `/health/ready` | Public | 200 raw health; 503 nếu database không sẵn sàng |
-| POST | `/client/users/sync` | Employee/Admin | 200 `User`; không nhận body; 401 nếu thiếu `iat` hợp lệ; 503 nếu database không sẵn sàng |
+| POST | `/client/users/sync` | Employee/Admin | 200 `User`; không có body hoặc JSON `{}`; 401 nếu thiếu `iat` hợp lệ; 503 nếu database không sẵn sàng |
 | GET | `/client/users/me` | Employee/Admin | 200 `User` của người gọi |
 | GET | `/admin/users/me` | Admin | 200 `User` của người gọi |
 
-Sync lấy `sub`, email/display name và `iat` từ token đã xác minh; request body không rỗng trả 400. Sync lặp hoặc đồng thời cùng `sub` giữ UUID, token cùng/cũ hơn không cập nhật snapshot. Hai endpoint `/users/me` chỉ đọc hồ sơ; thiếu hồ sơ trả 409 `USER_NOT_PROVISIONED`. Client/Admin dùng response DTO riêng; không có Admin sync endpoint. Hồ sơ Admin được cấp qua CLI. [Luồng provisioning](user-provisioning.md) mô tả thứ tự gọi và retry.
+Sync lấy `sub`, email/display name và `iat` từ token đã xác minh. Request không có body hoặc JSON `{}` được chấp nhận; object có field, array/scalar/null và payload không rỗng ngoài JSON trả 400. Payload vượt 100 KiB trả 413; encoding/charset không hỗ trợ trả 415. Sync lặp hoặc đồng thời cùng `sub` giữ UUID, token cùng/cũ hơn không cập nhật snapshot. Hai endpoint `/users/me` chỉ đọc hồ sơ; thiếu hồ sơ trả 409 `USER_NOT_PROVISIONED`. Client/Admin dùng response DTO riêng; không có Admin sync endpoint. Hồ sơ Admin được cấp qua CLI. [Luồng provisioning](user-provisioning.md) mô tả thứ tự gọi và retry.
 
 ### Phòng
 
@@ -127,11 +127,13 @@ Ví dụ response của `GET /api/v1/client/users/me`:
 
 | HTTP status | Trường hợp |
 |---|---|
-| 400 | DTO validation hoặc khoảng thời gian booking không hợp lệ |
+| 400 | DTO validation, body sync không hợp lệ hoặc khoảng thời gian booking không hợp lệ |
 | 401 | Thiếu access token hoặc token không hợp lệ |
 | 403 | Thiếu role hoặc không phải owner booking |
 | 404 | Resource không tồn tại; phòng không khả dụng khi tạo booking |
 | 409 | Booking trùng lịch hoặc chưa có hồ sơ ứng dụng |
+| 413 | Payload vượt giới hạn parser; kích thước body tối đa 100 KiB |
+| 415 | Parser không hỗ trợ encoding/charset của request |
 | 500 | Lỗi nội bộ không dự kiến |
 | 503 | Database readiness/sync không sẵn sàng hoặc lỗi lấy JWKS khi không có signing key cache khả dụng |
 

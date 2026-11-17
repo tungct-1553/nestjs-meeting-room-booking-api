@@ -52,7 +52,7 @@ Authorization: Bearer <access_token>
 ```
 
 - Quyền: Employee/Admin theo policy Client API.
-- Request không có body; body không rỗng trả 400. Không nhận dữ liệu danh tính, password hoặc role do client tự khai báo.
+- Request không có body hoặc JSON `{}` được chấp nhận. Object có field, array/scalar/null và payload không rỗng ngoài JSON trả 400. Chunked rỗng được xử lý như request rỗng thông thường; payload vượt 100 KiB trả 413, encoding/charset không hỗ trợ trả 415. Không nhận dữ liệu danh tính, password hoặc role do client tự khai báo.
 - Luôn trả 200 với `{ data: { id, email, displayName } }` sau khi transaction commit, cả khi tạo mới hoặc đã có hồ sơ.
 - Profile mapping giữ quy tắc Identity: `email` là string hoặc null; `displayName` lấy `name`, sau đó `preferred_username`, cuối cùng null.
 - Không phát token và không lưu role/password trong bảng user.

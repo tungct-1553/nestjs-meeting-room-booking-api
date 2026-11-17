@@ -9,6 +9,14 @@ import { RoomsModule } from './rooms/rooms.module';
 import { BookingsModule } from './bookings/bookings.module';
 
 @Module({
-  imports: [ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }), DatabaseModule, IdentityModule, UsersModule, RoomsModule, BookingsModule, HealthModule],
+  imports: [
+    ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }),
+    DatabaseModule,
+    IdentityModule,
+    UsersModule,
+    RoomsModule,
+    BookingsModule,
+    HealthModule,
+  ],
 })
 export class AppModule {}

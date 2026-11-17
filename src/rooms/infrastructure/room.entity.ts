@@ -1,4 +1,11 @@
-import { Check, Column, CreateDateColumn, Entity, PrimaryGeneratedColumn, UpdateDateColumn } from 'typeorm';
+import {
+  Check,
+  Column,
+  CreateDateColumn,
+  Entity,
+  PrimaryGeneratedColumn,
+  UpdateDateColumn,
+} from 'typeorm';
 @Entity('rooms')
 @Check('rooms_capacity_positive', 'capacity > 0')
 export class RoomEntity {
