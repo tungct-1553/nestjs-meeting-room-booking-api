@@ -1,69 +1,73 @@
-# Meeting Room Booking API
+# Meeting Room Booking API - Nestjs Tutorial
 
-Mock Project backend đặt phòng họp, xây dựng bằng NestJS theo kiến trúc **modular monolith**. Mục tiêu v1: nhân viên xem phòng, đặt và hủy lịch của mình; admin quản lý phòng. Keycloak phụ trách tài khoản và xác thực.
+REST API đặt phòng họp sử dụng NestJS, TypeORM, PostgreSQL và Keycloak. Kiến trúc modular monolith, tách API Client/Admin và dùng chung tầng nghiệp vụ.
 
-Trạng thái: **đã có foundation NestJS và các adapter transaction TypeORM**. HTTP hiện công khai health/readiness và Swagger; Keycloak guard, RBAC và các HTTP API nghiệp vụ sẽ được triển khai tiếp. Core service nhận principal từ caller nội bộ; chưa có HTTP nghiệp vụ cho client tự gửi principal/userId.
+## Yêu cầu
 
-## Tài liệu
-
-- [Requirements và API contract](docs/requirements.md)
-- [Kiến trúc và bảo mật](docs/architecture.md)
-- [Ví dụ phân lớp, DI và transaction](docs/implementation-patterns.md)
-- [Thiết kế database](docs/database.md) · [Sơ đồ draw.io](docs/database.drawio)
-- [Overview khóa học](docs/overview.md)
-
-## Phạm vi
-
-Room management, booking chống trùng lịch, RBAC, unit test và e2e test. Phiên bản đầu không có upload ảnh, notification, approval workflow, thanh toán hoặc frontend.
-
-API contract và database design là cơ sở triển khai, được cập nhật khi có thay đổi nghiệp vụ.
+- Node.js 22.13+, npm.
+- Docker Compose.
 
 ## Chạy local
-
-Yêu cầu Node.js 22 trở lên, npm và PostgreSQL 14 trở lên. Tài khoản database cần quyền tạo extension `btree_gist` ở bước migration (hoặc DBA cài extension trước). Runtime không tự synchronize schema hay chạy migration.
-
-Migration SQL viết tay là nguồn sự thật của schema; `synchronize` giữ `false`. Chưa hỗ trợ `migration:generate` vì metadata entity chưa phản ánh đầy đủ FK, exclusion constraint và UUID defaults. Khi đổi migration, review các constraint/index/default và chạy PostgreSQL integration tests; xem [database design](docs/database.md).
 
 ```bash
 npm ci
 cp .env.example .env
-# Sửa DATABASE_URL, CORS_ORIGINS trong .env cho môi trường local.
+```
+
+Cấu hình `.env` theo [mẫu](.env.example). `DATABASE_URL` phải khớp `BOOKING_DB_PASSWORD` và `POSTGRES_PORT`; password trong URL cần URL-encode. Với volume có sẵn, chạy `bash scripts/bootstrap-database.sh` sau khi PostgreSQL sẵn sàng và trước khi khởi động Keycloak; xem [bootstrap database](docs/database.md#bootstrap-local).
+
+```bash
+docker compose up -d --wait
 npm run migration:run
+node scripts/bootstrap-keycloak-users.mjs
 npm run start:dev
 ```
 
-Build và chạy bản compiled:
+PostgreSQL dùng schema `public` cho ứng dụng và `keycloak` cho Keycloak.
+
+| Dịch vụ | URL |
+|---|---|
+| Client Swagger | http://localhost:3000/api/v1/docs/client |
+| Admin Swagger | http://localhost:3000/api/v1/docs/admin |
+| Keycloak Admin Console | http://localhost:8081/admin |
+
+Swagger hỗ trợ OAuth2 Authorization Code + PKCE và bearer token. Redirect URI mặc định dùng `http://localhost:3000`; đổi host/cổng API cần cập nhật redirect URI và Web Origins trong Keycloak.
+
+| Tài khoản test | Password trong `.env` |
+|---|---|
+| `employee@example.test` | `KEYCLOAK_EMPLOYEE_PASSWORD` |
+| `admin@example.test` | `KEYCLOAK_TEST_ADMIN_PASSWORD` |
+
+Sau đăng nhập Employee, gọi `POST /api/v1/client/users/sync` không có body trước khi đọc `/client/users/me`. Script bootstrap cấp sẵn hồ sơ Admin; `/admin/users/me` chỉ đọc. Xem [luồng khởi tạo hồ sơ](docs/user-provisioning.md).
+
+## Build và test
 
 ```bash
 npm run build
 npm start
 ```
 
-- `GET /api/v1/health`: liveness public, trả `{ "status": "ok" }`.
-- `GET /api/v1/health/ready`: kiểm tra database, trả 503 khi dependency không sẵn sàng.
-- `/api/v1/docs`: Swagger UI; `/api/v1/docs-json`: OpenAPI JSON có bearer scheme.
-
-Config được validate khi bootstrap; `DATABASE_URL` bắt buộc, `PORT` mặc định 3000, `DB_POOL_MAX` mặc định 10. `CORS_ORIGINS` là các HTTP origin phân cách dấu phẩy, mặc định không cho phép origin nào. Mỗi request có header `x-request-id`; log chỉ chứa request ID, HTTP method, status và thời gian xử lý, không ghi token/body/query string.
-
-## Các phần đã dựng
-
-- Module Identity, Users, Rooms, Bookings cùng cấu hình, validation, error envelope và response interceptor dùng chung. Identity hiện là ranh giới module chuẩn bị cho Keycloak, chưa có verifier/guard.
-- Một DataSource/pool dùng chung, lifecycle shutdown, CLI migration; schema users/rooms/bookings với FK RESTRICT, check và exclusion constraint chống trùng giờ.
-- Users đồng bộ hồ sơ qua repository port; Rooms công khai factory cung cấp thao tác khóa phòng cho transaction của Bookings.
-- Core service tạo booking và deactivate phòng dùng cùng quy tắc khóa; unit of work tạo repository theo manager của từng transaction và ánh xạ đúng lỗi constraint.
-
-Danh mục và quy cách tài liệu tại [docs/README.md](docs/README.md). Core services hiện được gọi nội bộ, chưa có controller HTTP nghiệp vụ. Các endpoint trong requirements vẫn là contract cần hoàn thành sau khi có JWT/RBAC; danh sách, hủy booking, CRUD phòng đầy đủ, rate limiting và seeder CLI thuộc các bước tiếp theo.
-
-Handler trả một đối tượng nghiệp vụ để interceptor tạo `{ data: object }`. Handler danh sách phân trang trả `PaginatedResponse<T>` từ `src/common/types/paginated-response.ts`, ví dụ `new PaginatedResponse(rows, { page, limit, total })`, để response có đúng `{ data: rows, meta: { page, limit, total } }`. Health dùng `RawResponse`; HTTP 204 giữ body rỗng.
-
-## Kiểm tra
+Build xóa `dist` trước khi biên dịch để không giữ module cũ khi thay đổi cấu trúc folder.
 
 ```bash
 npm run typecheck
-npm run build
+npm run lint
+npm run format:check
 npm test
-# Dùng database riêng cho integration test; test tự tạo và xóa schema riêng.
-TEST_DATABASE_URL=postgresql://user:password@localhost:5432/booking_test npm run test:integration
+node scripts/test-bootstrap.mjs
+TEST_DATABASE_URL='<PostgreSQL test URL>' npm run test:integration
 ```
 
-Unit/HTTP tests kiểm tra DI, envelope/validation, CORS, health, Swagger, quy tắc lấy userId từ principal đã đồng bộ và ánh xạ lỗi. Owner policy xem/hủy booking qua HTTP chưa có vì các API đó chưa được triển khai. Integration tests chạy PostgreSQL thật để kiểm tra migration, concurrency, lịch liền nhau, cancelled, rollback và thứ tự khóa giữa booking/deactivate. Test yêu cầu database riêng với quyền tạo schema/extension. Không thay PostgreSQL bằng SQLite vì exclusion constraint và khóa dòng là hành vi cần kiểm chứng.
+Integration tests yêu cầu database test riêng với quyền tạo schema/extension. Test bootstrap tự tạo và xóa PostgreSQL container tạm.
+
+`npm run test:architecture` kiểm tra riêng ranh giới layer và module. Dùng `npm run format` để định dạng code và `npm run lint:fix` để sửa các lỗi lint tự động.
+
+## Tài liệu
+
+- [API contract](docs/requirements.md)
+- [User provisioning](docs/user-provisioning.md)
+- [Kiến trúc](docs/architecture.md)
+- [Quy tắc coding](docs/coding-standards.md)
+- [Database](docs/database.md) · [ERD](docs/database.drawio)
+- [DI và transaction](docs/implementation-patterns.md)
+- [Overview khóa học](docs/overview.md)

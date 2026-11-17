@@ -1,54 +1,163 @@
 # Requirements và API contract
 
-## Đối tượng và phạm vi
+API đặt phòng họp gồm tra cứu phòng, quản lý phòng và tạo/xem/hủy booking. Keycloak quản lý tài khoản, đăng ký, đăng nhập, refresh token và role. API không nhận password hoặc phát token.
 
-- **Employee:** xem phòng, đặt phòng, xem và hủy booking của chính mình.
-- **Admin:** có quyền Employee; tạo, sửa và ngừng hoạt động phòng. Không tự động có quyền xem hoặc hủy booking của người khác trong phiên bản đầu.
-- **Keycloak:** quản lý đăng ký, đăng nhập, refresh token và role. Không tạo API NestJS riêng để nhận password hoặc phát token.
-- Ngoài phạm vi: upload ảnh, thông báo qua email, workflow duyệt booking, thanh toán, đồng bộ lịch bên ngoài và frontend.
+Ngoài phạm vi: frontend, upload ảnh, email notification, approval workflow, thanh toán và đồng bộ lịch bên ngoài.
 
-## Quy tắc nghiệp vụ
+## 1. Quyền truy cập và danh tính
 
-1. Một booking thuộc một phòng và một user; `startAt` và `endAt` là thời điểm ISO 8601 có timezone, lưu UTC. `startAt < endAt`; chỉ cho phép tạo booking bắt đầu trong tương lai.
-2. Khoảng thời gian dùng `[startAt, endAt)`: booking kết thúc đúng lúc booking khác bắt đầu không trùng. Booking đã hủy không giữ phòng.
-3. Hai booking đang hoạt động của cùng phòng không được giao nhau, kể cả khi tạo đồng thời. Database là lớp bảo đảm cuối cùng; lỗi tranh chấp trả 409.
-4. Chỉ chủ booking được xem chi tiết và hủy booking; hủy lặp lại trả booking đã hủy. Chỉ admin được quản lý phòng. User không hợp lệ/thiếu token trả 401; không đủ quyền trả 403.
-5. Phòng ngừng hoạt động không nhận booking mới; booking đã tồn tại được giữ lại. Xóa phòng bằng cách chuyển trạng thái inactive, không xóa cứng lịch sử.
+| Nhóm API | Quyền |
+|---|---|
+| Health/readiness | Public |
+| `/client/*` | Employee hoặc Admin |
+| `/admin/*` | Admin |
+| Xem chi tiết/hủy booking | Có quyền Client API và là chủ booking |
 
-## Quy ước API
+Admin có quyền Employee nhưng không được xem/hủy booking của user khác. Namespace phân chia contract HTTP; quyền thao tác được kiểm tra bằng role và owner policy.
 
-- Base path `/api/v1`; request xác thực dùng `Authorization: Bearer <access_token>` từ Keycloak.
-- JSON response; ngày giờ trả ISO 8601 UTC. List dùng `page` mặc định 1, `limit` mặc định 20, tối đa 100; response `{ "data": [...], "meta": { "page": 1, "limit": 20, "total": 0 } }`.
-- Thứ tự danh sách: phòng theo `name ASC, id ASC`; booking cá nhân theo `created_at DESC, id DESC`. Thứ tự được áp dụng sau filter và trước offset/limit.
-- Các path trong bảng là tương đối với `/api/v1`; ví dụ `/health` là `/api/v1/health`. Health/readiness trả body raw, HTTP 204 không có body.
-- Response một đối tượng: `{ "data": { ... } }`; lỗi: `{ "error": { "code": "...", "message": "...", "details": [] } }`. Validation trả 400, không tồn tại 404, xung đột thời gian 409.
-- `User`: `{ "id": "uuid", "displayName": null, "email": null }` (hai field này là `string | null`); `Room`: `{ "id": "uuid", "name": "...", "capacity": 10, "description": null, "isActive": true }`; `Booking`: `{ "id": "uuid", "roomId": "uuid", "userId": "uuid", "title": "...", "startAt": "...Z", "endAt": "...Z", "status": "confirmed", "createdAt": "...Z" }`.
+Access token đã xác minh cung cấp Keycloak `sub`. Users đồng bộ hồ sơ theo `users.keycloak_sub = sub`, trả UUID `users.id`; UUID này được dùng làm `Booking.userId`. Client không gửi `userId` khi tạo booking. Email/display name là snapshot nullable, không dùng làm khóa định danh.
 
-| Method | Endpoint (tương đối với `/api/v1`) | Quyền | Params / body | Response |
+## 2. Quy tắc nghiệp vụ
+
+### Phòng
+
+- Chỉ phòng active được hiển thị qua Client API và nhận booking mới.
+- Admin tạo, sửa và ngừng hoạt động phòng; ngừng hoạt động bằng `isActive = false`, không xóa cứng lịch sử.
+- Booking đã tồn tại được giữ khi phòng chuyển inactive.
+
+### Booking
+
+- Một booking thuộc một phòng và một user. `startAt`/`endAt` phải là ISO 8601 có timezone; `startAt < endAt` và chỉ tạo booking bắt đầu trong tương lai.
+- Khoảng thời gian là `[startAt, endAt)`: booking kết thúc đúng lúc booking khác bắt đầu được phép.
+- Booking `confirmed` giữ phòng; booking `cancelled` không giữ phòng. Hai booking confirmed cùng phòng không được giao nhau, kể cả khi tạo đồng thời.
+- Danh sách chỉ trả booking của người gọi. Xem chi tiết và hủy yêu cầu owner; không phải owner trả 403, không tồn tại trả 404.
+- Hủy chuyển trạng thái sang `cancelled`; hủy lặp lại trả booking đã hủy.
+
+## 3. Quy ước HTTP
+
+Base path là `/api/v1`; các path trong bảng endpoint bên dưới tương đối với base path. API có xác thực nhận `Authorization: Bearer <access_token>`.
+
+Response JSON, field ngày giờ serialize ISO 8601 UTC. Quy ước envelope:
+
+| Loại response | Body |
+|---|---|
+| Đối tượng | `{ "data": { ... } }` |
+| Danh sách | `{ "data": [...], "meta": { "page": 1, "limit": 20, "total": 0 } }` |
+| Lỗi | `{ "error": { "code": "...", "message": "...", "details": [] } }` |
+| Health/readiness thành công | `{ "status": "ok" }` |
+| HTTP 204 | Không có body |
+
+### Phân trang và bộ lọc
+
+`page` là số nguyên từ 1, mặc định 1. `limit` là số nguyên từ 1 đến 100, mặc định 20. `meta` gồm trang hiện tại, giới hạn và tổng số bản ghi sau filter.
+
+| Danh sách | Filter ngoài `page`/`limit` | Thứ tự |
+|---|---|---|
+| Phòng | `capacity`: sức chứa tối thiểu; `search`: tìm theo tên | `name ASC, id ASC` |
+| Booking cá nhân | `status`: `confirmed` hoặc `cancelled` | `created_at DESC, id DESC` |
+
+Áp dụng filter và thứ tự trước offset/limit. Client không điều khiển owner filter của danh sách booking.
+
+## 4. Endpoint
+
+Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong envelope `data`. Health, sync và hai endpoint đọc hồ sơ đã có HTTP; các endpoint Room/Booking là contract cho phần nghiệp vụ tiếp theo.
+
+### Health và hồ sơ
+
+| Method | Path | Quyền | Response |
+|---|---|---|---|
+| GET | `/health` | Public | 200 raw health |
+| GET | `/health/ready` | Public | 200 raw health; 503 nếu database không sẵn sàng |
+| POST | `/client/users/sync` | Employee/Admin | 200 `User`; không có body hoặc JSON `{}`; 401 nếu thiếu `iat` hợp lệ; 503 nếu database không sẵn sàng |
+| GET | `/client/users/me` | Employee/Admin | 200 `User` của người gọi |
+| GET | `/admin/users/me` | Admin | 200 `User` của người gọi |
+
+Sync lấy `sub`, email/display name và `iat` từ token đã xác minh. Request không có body hoặc JSON `{}` được chấp nhận; object có field, array/scalar/null và payload không rỗng ngoài JSON trả 400. Payload vượt 100 KiB trả 413; encoding/charset không hỗ trợ trả 415. Sync lặp hoặc đồng thời cùng `sub` giữ UUID, token cùng/cũ hơn không cập nhật snapshot. Hai endpoint `/users/me` chỉ đọc hồ sơ; thiếu hồ sơ trả 409 `USER_NOT_PROVISIONED`. Client/Admin dùng response DTO riêng; không có Admin sync endpoint. Hồ sơ Admin được cấp qua CLI. [Luồng provisioning](user-provisioning.md) mô tả thứ tự gọi và retry.
+
+### Phòng
+
+| Method | Path | Quyền | Input | Response |
 |---|---|---|---|---|
-| GET | `/health` | Public | Không | 200 `{ "status": "ok" }` |
-| GET | `/health/ready` | Public | Không | 200 `{ "status": "ok" }`; 503 error envelope khi DB không sẵn sàng |
-| GET | `/users/me` | Đăng nhập | Không | 200 `User` |
-| GET | `/rooms` | Đăng nhập | `page`, `limit`, `capacity` tối thiểu, `search` theo tên | 200 list `Room` đang active |
-| GET | `/rooms/:id` | Đăng nhập | UUID phòng | 200 `Room`; 404 nếu không có/đã inactive |
-| POST | `/rooms` | Admin | `name`, `capacity`, `description?` | 201 `Room`; 400 invalid |
-| PATCH | `/rooms/:id` | Admin | `name?`, `capacity?`, `description?` | 200 `Room`; 404 không tồn tại |
-| DELETE | `/rooms/:id` | Admin | UUID phòng | 204; ngừng hoạt động phòng; 404 không tồn tại |
-| POST | `/bookings` | Đăng nhập | `roomId`, `title`, `startAt`, `endAt` | 201 `Booking`; 404 phòng không khả dụng; 409 trùng lịch |
-| GET | `/bookings` | Đăng nhập | `page`, `limit`, `status?` (`confirmed`/`cancelled`) | 200 list `Booking` của user hiện tại |
-| GET | `/bookings/:id` | Chủ booking | UUID booking | 200 `Booking`; 403 không phải chủ; 404 không tồn tại |
-| DELETE | `/bookings/:id` | Chủ booking | UUID booking | 200 `Booking` trạng thái `cancelled`; 403 không phải chủ; 404 không tồn tại |
+| GET | `/client/rooms` | Employee/Admin | Query phân trang/filter phòng | 200 list `Room` active |
+| GET | `/client/rooms/:id` | Employee/Admin | UUID phòng | 200 `Room`; 404 nếu không tồn tại/inactive |
+| POST | `/admin/rooms` | Admin | `name`, `capacity`, `description?` | 201 `Room`; 400 nếu invalid |
+| PATCH | `/admin/rooms/:id` | Admin | `name?`, `capacity?`, `description?` | 200 `Room`; 404 nếu không tồn tại |
+| DELETE | `/admin/rooms/:id` | Admin | UUID phòng | 204; 404 nếu không tồn tại |
 
-Mọi endpoint yêu cầu đăng nhập có thể trả 401; endpoint Admin có thể trả 403. Ký hiệu `User`/`Room`/`Booking` trong bảng là kiểu dữ liệu bên trong `{ "data": ... }`; list có envelope `{ data, meta }`. Các lỗi sử dụng error envelope quy định ở trên.
+`DELETE` ngừng hoạt động phòng. Phòng đã inactive vẫn hoàn tất thao tác với 204.
 
-## Phân quyền và bảo mật dữ liệu
+### Booking
 
-Access token đã xác minh cung cấp Keycloak `sub`. Users upsert theo `users.keycloak_sub = sub` và trả `users.id`; UUID này là `Booking.userId`. Không nhận `userId` từ client khi đặt phòng. Token cần hợp lệ và có audience của API; dữ liệu cá nhân chỉ chứa thông tin cần cho nghiệp vụ.
+| Method | Path | Quyền | Input | Response |
+|---|---|---|---|---|
+| POST | `/client/bookings` | Employee/Admin | `roomId`, `title`, `startAt`, `endAt` | 201 `Booking`; 404 nếu phòng không khả dụng; 409 nếu trùng lịch |
+| GET | `/client/bookings` | Employee/Admin | Query phân trang/filter booking | 200 list `Booking` của người gọi |
+| GET | `/client/bookings/:id` | Chủ booking | UUID booking | 200 `Booking`; 403 nếu không phải owner; 404 nếu không tồn tại |
+| DELETE | `/client/bookings/:id` | Chủ booking | UUID booking | 200 `Booking` cancelled; 403 nếu không phải owner; 404 nếu không tồn tại |
 
-## Acceptance criteria
+## 5. Response model
 
-- Employee tạo và hủy booking của mình; không thể hủy booking của user khác hoặc quản lý phòng.
-- Hai request đồng thời cho cùng phòng/khoảng thời gian chỉ tối đa một request tạo thành công.
-- Khoảng thời gian liền nhau được phép; hủy booking giải phóng khoảng thời gian.
-- API không trả thông tin nhạy cảm.
-- Response tuân thủ contract; list có thứ tự ổn định và giới hạn phân trang.
+| Model | Field | Kiểu |
+|---|---|---|
+| User | `id` | UUID ứng dụng |
+| | `email`, `displayName` | `string \| null` |
+| Room | `id` | UUID |
+| | `name` | `string` |
+| | `capacity` | Số nguyên dương |
+| | `description` | `string \| null` |
+| | `isActive` | `boolean` |
+| Booking | `id`, `roomId`, `userId` | UUID |
+| | `title` | `string` |
+| | `startAt`, `endAt`, `createdAt` | ISO 8601 UTC |
+| | `status` | `confirmed` hoặc `cancelled` |
+
+Ví dụ response của `GET /api/v1/client/users/me`:
+
+```json
+{
+  "data": {
+    "id": "bbaf402c-a8ce-43a8-9268-0bbcbe8eaa74",
+    "email": "employee@example.test",
+    "displayName": "Employee Local"
+  }
+}
+```
+
+## 6. Lỗi
+
+| HTTP status | Trường hợp |
+|---|---|
+| 400 | DTO validation, body sync không hợp lệ hoặc khoảng thời gian booking không hợp lệ |
+| 401 | Thiếu access token hoặc token không hợp lệ |
+| 403 | Thiếu role hoặc không phải owner booking |
+| 404 | Resource không tồn tại; phòng không khả dụng khi tạo booking |
+| 409 | Booking trùng lịch hoặc chưa có hồ sơ ứng dụng |
+| 413 | Payload vượt giới hạn parser; kích thước body tối đa 100 KiB |
+| 415 | Parser không hỗ trợ encoding/charset của request |
+| 500 | Lỗi nội bộ không dự kiến |
+| 503 | Database readiness/sync không sẵn sàng hoặc lỗi lấy JWKS khi không có signing key cache khả dụng |
+
+Role claim thiếu/sai cấu trúc được chuẩn hóa thành danh sách rỗng; quyền truy cập Client/Admin khi đó bị từ chối với 403. API không trả token hoặc chi tiết lỗi database/JWKS nội bộ.
+
+`error.details` là danh sách thông báo validation; các lỗi khác dùng danh sách rỗng. Lỗi HTTP dùng code `HTTP_<status>`; lỗi không xác định dùng `INTERNAL_SERVER_ERROR`. Các lỗi nghiệp vụ hiện có gồm `INVALID_BOOKING_TIME` (400), `ROOM_UNAVAILABLE`/`ROOM_NOT_FOUND` (404) và `BOOKING_TIME_CONFLICT` (409), `USER_NOT_PROVISIONED` (409), `INVALID_PROFILE_TOKEN` (401) và `PROFILE_SYNC_UNAVAILABLE` (503).
+
+```json
+{
+  "error": {
+    "code": "HTTP_401",
+    "message": "Invalid or missing access token",
+    "details": []
+  }
+}
+```
+
+## 7. Tiêu chí nghiệm thu
+
+- Employee tạo và hủy booking của mình; không thể quản lý phòng hoặc truy cập booking của user khác.
+- Admin sử dụng được Client API và quản lý phòng, vẫn chịu kiểm tra owner khi xem/hủy booking.
+- Hai request đồng thời cho cùng phòng/khoảng giờ chỉ tối đa một request tạo thành công.
+- Khoảng giờ liền nhau hợp lệ; hủy booking giải phóng lịch; ngừng hoạt động phòng giữ lịch sử.
+- Hồ sơ đồng bộ theo `sub` có UUID ổn định; API không trả thông tin nhạy cảm.
+- Response đúng envelope, nullability, thứ tự và giới hạn phân trang của contract.
+
+Ranh giới module và xử lý transaction được mô tả tại [architecture.md](architecture.md); schema và constraint tại [database.md](database.md).

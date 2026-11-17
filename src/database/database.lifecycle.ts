@@ -4,6 +4,8 @@ import { DataSource } from 'typeorm';
 export class DatabaseLifecycle implements OnApplicationShutdown {
   constructor(@Inject(DataSource) private readonly source: DataSource) {}
   async onApplicationShutdown(): Promise<void> {
-    if (this.source.isInitialized) await this.source.destroy();
+    if (this.source.isInitialized) {
+      await this.source.destroy();
+    }
   }
 }
