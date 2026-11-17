@@ -367,7 +367,7 @@ describe('Identity HTTP with signed JWT and JWKS', () => {
       expect(Object.keys(response.body.paths)).toEqual(
         zone === 'client'
           ? ['/api/v1/client/users/me', '/api/v1/client/users/sync']
-          : ['/api/v1/admin/users/me'],
+          : ['/api/v1/admin/users/me', '/api/v1/admin/rooms', '/api/v1/admin/rooms/{id}'],
       );
       expect(response.body.components.securitySchemes.oauth2.flows.authorizationCode).toBeDefined();
       const setup = await request(app.getHttpServer())

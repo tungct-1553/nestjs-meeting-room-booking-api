@@ -2,6 +2,8 @@ import type { EntityManager } from 'typeorm';
 import type { RoomSnapshot } from '../application/models/room-snapshot';
 import type { RoomTransactionRepositoryPort } from '../application/ports/room-repository.port';
 import { RoomEntity } from './room.entity';
+import type { Room, RoomDetailsPatch } from '../application/models/room';
+import { toRoom } from './room.mapper';
 
 export class TypeormRoomRepository implements RoomTransactionRepositoryPort {
   constructor(private readonly manager: EntityManager) {
@@ -20,6 +22,13 @@ export class TypeormRoomRepository implements RoomTransactionRepositoryPort {
   async setActive(id: string, isActive: boolean): Promise<void> {
     this.assertActive();
     await this.manager.getRepository(RoomEntity).update(id, { isActive });
+  }
+
+  async updateDetails(id: string, patch: RoomDetailsPatch): Promise<Room> {
+    this.assertActive();
+    const repository = this.manager.getRepository(RoomEntity);
+    await repository.update(id, patch);
+    return toRoom(await repository.findOneByOrFail({ id }));
   }
 
   private assertActive(): void {

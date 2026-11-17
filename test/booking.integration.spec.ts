@@ -5,6 +5,7 @@ import { databaseOptions } from '../src/database/options';
 import { TypeormBookingUnitOfWork } from '../src/bookings/infrastructure/typeorm-booking-unit-of-work';
 import { RoomsTransactionFactory } from '../src/rooms/infrastructure/public/rooms-transaction.factory';
 import { RoomsService } from '../src/rooms/application/rooms.service';
+import { TypeormRoomCreationRepository } from '../src/rooms/infrastructure/typeorm-room-creation.repository';
 import { TypeormRoomsUnitOfWork } from '../src/rooms/infrastructure/typeorm-rooms-unit-of-work';
 import { TypeormUserRepository } from '../src/users/infrastructure/typeorm-user.repository';
 import { UsersService } from '../src/users/application/users.service';
@@ -197,7 +198,10 @@ it('preserves an existing booking when deactivate waits for its transaction', as
     return row;
   });
   await locked.promise;
-  const deactivate = new RoomsService(new TypeormRoomsUnitOfWork(source)).deactivate(roomId);
+  const deactivate = new RoomsService(
+    new TypeormRoomsUnitOfWork(source),
+    new TypeormRoomCreationRepository(source),
+  ).deactivate(roomId);
   try {
     await waitForBlockedTransaction();
   } finally {
@@ -259,7 +263,10 @@ it('rolls back a Rooms workflow failure and rejects escaped transaction access',
 });
 
 it('keeps deactivate idempotent and reports missing rooms from application', async () => {
-  const rooms = new RoomsService(new TypeormRoomsUnitOfWork(source));
+  const rooms = new RoomsService(
+    new TypeormRoomsUnitOfWork(source),
+    new TypeormRoomCreationRepository(source),
+  );
   await expect(rooms.deactivate(randomUUID())).rejects.toThrow('Room was not found');
   await rooms.deactivate(roomId);
   await rooms.deactivate(roomId);

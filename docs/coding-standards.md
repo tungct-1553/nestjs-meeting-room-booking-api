@@ -116,6 +116,8 @@ Application sở hữu **ý nghĩa nghiệp vụ**; adapter sở hữu **cách b
 |---|---|---|
 | Đọc user bắt buộc tồn tại | Ném `UserNotProvisionedError` khi repository trả `null` | SELECT, map row sang `User` |
 | Sync profile | Kiểm tra input, gọi `upsertIfNewer` theo contract watermark | Upsert nguyên tử, giữ UUID, chỉ cập nhật khi phiên bản mới hơn |
+| Create room | Validate/normalize input, đặt active mặc định và gọi port tạo nguyên tử | INSERT, map row, chuyển lỗi unique tên đã biết |
+| Update room | Validate patch, điều phối UoW và quyết định lỗi không tìm thấy | Khóa row, cập nhật field được gửi và trả model đầy đủ |
 | Deactivate room | Mở phạm vi UoW, kiểm tra phòng tồn tại, yêu cầu `isActive = false` | Khóa row, trả snapshot, cập nhật bằng manager được bind |
 | Create booking | Lookup actor, kiểm tra phòng/thời gian trong UoW, chọn `status = confirmed` | Khóa phòng, insert và bảo vệ exclusion constraint |
 
@@ -162,7 +164,7 @@ Ví dụ: `USER_NOT_PROVISIONED` có kind `conflict`; `INVALID_PROFILE_TOKEN` c�
 - Controller trả response DTO; interceptor tạo envelope `{ data }` một lần. Health dùng raw response; HTTP 204 không có body.
 - Application trả model thuần. Kết quả phân trang của application chỉ chứa items và metadata; presentation chuyển sang `PaginatedResponse` dành cho HTTP.
 - Mapper response khai báo tường minh field được trả. Không spread ORM entity hoặc principal vào response.
-- Mỗi controller công bố request/response và security bằng decorator. Decorator chung `ApiDataResponse(Model)` đăng ký model và envelope để tránh `$ref` dạng chuỗi và `extraModels` viết tay ở bootstrap.
+- Mỗi controller công bố request/response và security bằng decorator. Decorator chung `ApiDataResponse(Model, status)` đăng ký model/envelope và status, mặc định 200; POST tạo resource dùng 201. Không dùng `$ref` dạng chuỗi hoặc `extraModels` viết tay ở bootstrap.
 - Cấu hình Swagger đặt trong `src/http/swagger.ts`. Chỉ cấu hình OAuth, URL và tạo document theo Client/Admin; không sửa security của từng operation sau khi sinh document.
 - Client/Admin Swagger chỉ công bố route thuộc namespace tương ứng. Không coi việc lọc Swagger là cơ chế phân quyền API.
 
