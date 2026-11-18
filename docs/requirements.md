@@ -65,7 +65,7 @@ Search phòng được trim/NFC trước validation, tối đa 200 Unicode code 
 
 ## 4. Endpoint
 
-Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong envelope `data`. Health, sync, hai endpoint đọc hồ sơ và các endpoint Room đã có HTTP. Endpoint Booking là contract cho phần nghiệp vụ tiếp theo.
+Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong envelope `data`.
 
 ### Health và hồ sơ
 
