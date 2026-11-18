@@ -137,6 +137,35 @@ return this.source.transaction('READ COMMITTED', (manager) =>
 
 Repository chỉ thực hiện `lockById` và `setActive` bằng manager được bind; không ném lỗi phòng không tồn tại hoặc tự mở transaction. Thiếu row được biểu diễn bằng `null`. Deactivate phòng đã inactive vẫn thành công, không hủy booking đã có.
 
+Create dùng [RoomCreationRepositoryPort](../src/rooms/application/ports/room-creation-repository.port.ts) cho một insert nguyên tử, không bọc thêm UoW:
+
+```ts
+create(input: CreateRoomInput): Promise<Room> {
+  return this.creator.create(normalizeCreateRoom(input));
+}
+```
+
+DTO và policy dùng chung formatter trim/NFC trước khi kiểm tra độ dài tên; policy tiếp tục bảo vệ invariant cho caller ngoài HTTP, đặt description mặc định null và `isActive = true`. [Creation adapter](../src/rooms/infrastructure/typeorm-room-creation.repository.ts) lấy repository từ DataSource singleton, insert và map entity sang Room. Không SELECT kiểm tra tên trước insert; database bảo vệ identity không phân biệt hoa/thường, trong khi tên hiển thị giữ cách viết.
+
+Update giữ việc quyết định lỗi không tìm thấy trong application và dùng UoW hiện có:
+
+```ts
+async update(input: UpdateRoomInput): Promise<Room> {
+  const patch = normalizeRoomPatch(input);
+  return this.uow.run(async ({ rooms }) => {
+    const room = await rooms.lockById(input.roomId);
+    if (room === null) {
+      throw new RoomNotFoundError();
+    }
+    return rooms.updateDetails(room.id, patch);
+  });
+}
+```
+
+`normalizeRoomPatch` chỉ đưa field khác undefined vào patch; null của description được giữ để xóa mô tả. Repository UPDATE các field này rồi đọc model đầy đủ bằng cùng manager trong transaction. Không ghi toàn bộ snapshot cũ hoặc cập nhật `isActive` qua API sửa thông tin.
+
+Creation adapter và Rooms UoW dùng chung [mapper lỗi PostgreSQL](../src/rooms/infrastructure/postgres-room-error.ts): chỉ SQLSTATE `23505` mang tên unique index `rooms_name_key` trở thành `RoomNameConflictError`. Tên index được giữ khi migration thay quy tắc raw text bằng trim/NFC/lowercase. UoW map bên ngoài `await transaction(...)`, không bắt lỗi rồi tiếp tục callback như thể thành công. Lỗi khác được ném tiếp.
+
 ## 5. Bookings: transaction liên module
 
 [BookingUnitOfWork](../src/bookings/application/ports/booking-unit-of-work.port.ts) cung cấp hai contract persistence cho callback:
@@ -209,4 +238,4 @@ Lỗi khác được ném tiếp. Không bắt lỗi insert rồi tiếp tục t
 
 Application error định nghĩa `code` và `kind`, không có HTTP status. [ApiExceptionFilter](../src/common/http/filters/api-exception.filter.ts) map `kind` sang status; không liệt kê từng mã lỗi feature. Ví dụ `USER_NOT_PROVISIONED` thuộc kind `conflict` nên trả 409; lỗi không dự kiến trả 500 với message chung.
 
-Controller chỉ map model thuần sang response DTO. `ApiDataResponse(Model)` đăng ký model/envelope cho Swagger; response interceptor bọc `{ data }` một lần. Danh sách được presentation chuyển sang `PaginatedResponse`; Health dùng raw response và HTTP 204 giữ body rỗng. Wire format tại [API contract](requirements.md).
+Controller chỉ map model thuần sang response DTO. `ApiDataResponse(Model, 201)` công bố response tạo resource; mặc định 200 cho các thao tác khác. Decorator đăng ký model/envelope cho Swagger; response interceptor bọc `{ data }` một lần. Danh sách được presentation chuyển sang `PaginatedResponse`; Health dùng raw response và HTTP 204 giữ body rỗng. Wire format tại [API contract](requirements.md).

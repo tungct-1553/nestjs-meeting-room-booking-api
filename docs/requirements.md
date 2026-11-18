@@ -24,6 +24,9 @@ Access token đã xác minh cung cấp Keycloak `sub`. Users đồng bộ hồ s
 - Chỉ phòng active được hiển thị qua Client API và nhận booking mới.
 - Admin tạo, sửa và ngừng hoạt động phòng; ngừng hoạt động bằng `isActive = false`, không xóa cứng lịch sử.
 - Booking đã tồn tại được giữ khi phòng chuyển inactive.
+- Tên phòng được trim hai đầu và chuẩn hóa NFC trước khi kiểm tra độ dài 1–200 Unicode code point. Tên duy nhất không phân biệt hoa/thường; giữ hoa/thường và dấu để hiển thị. NFC/NFD tương đương được coi là cùng tên; dấu khác nhau vẫn phân biệt. Tên và mô tả không chứa NUL (`\u0000`).
+- Capacity nhận JSON number nguyên từ 1 đến 2147483647. Description nhận string hoặc null; không gửi khi tạo được lưu null.
+- PATCH phải có ít nhất một field được sửa. Field không gửi giữ nguyên; `description: null` xóa mô tả; `name`/`capacity` không nhận null. Admin được sửa thông tin phòng inactive; PATCH không nhận `isActive`.
 
 ### Booking
 
@@ -60,7 +63,7 @@ Response JSON, field ngày giờ serialize ISO 8601 UTC. Quy ước envelope:
 
 ## 4. Endpoint
 
-Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong envelope `data`. Health, sync và hai endpoint đọc hồ sơ đã có HTTP; các endpoint Room/Booking là contract cho phần nghiệp vụ tiếp theo.
+Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong envelope `data`. Health, sync và hai endpoint đọc hồ sơ đã có HTTP; POST/PATCH Admin Room được triển khai trong phần quản lý phòng. Các endpoint Room còn lại và Booking là contract cho phần nghiệp vụ tiếp theo.
 
 ### Health và hồ sơ
 
@@ -80,8 +83,8 @@ Sync lấy `sub`, email/display name và `iat` từ token đã xác minh. Reques
 |---|---|---|---|---|
 | GET | `/client/rooms` | Employee/Admin | Query phân trang/filter phòng | 200 list `Room` active |
 | GET | `/client/rooms/:id` | Employee/Admin | UUID phòng | 200 `Room`; 404 nếu không tồn tại/inactive |
-| POST | `/admin/rooms` | Admin | `name`, `capacity`, `description?` | 201 `Room`; 400 nếu invalid |
-| PATCH | `/admin/rooms/:id` | Admin | `name?`, `capacity?`, `description?` | 200 `Room`; 404 nếu không tồn tại |
+| POST | `/admin/rooms` | Admin | `name`, `capacity`, `description?` | 201 `Room`; 400 nếu invalid; 409 nếu trùng tên |
+| PATCH | `/admin/rooms/:id` | Admin | `name?`, `capacity?`, `description?` | 200 `Room`; 400 nếu UUID/body invalid; 404 nếu không tồn tại; 409 nếu trùng tên |
 | DELETE | `/admin/rooms/:id` | Admin | UUID phòng | 204; 404 nếu không tồn tại |
 
 `DELETE` ngừng hoạt động phòng. Phòng đã inactive vẫn hoàn tất thao tác với 204.
@@ -131,7 +134,7 @@ Ví dụ response của `GET /api/v1/client/users/me`:
 | 401 | Thiếu access token hoặc token không hợp lệ |
 | 403 | Thiếu role hoặc không phải owner booking |
 | 404 | Resource không tồn tại; phòng không khả dụng khi tạo booking |
-| 409 | Booking trùng lịch hoặc chưa có hồ sơ ứng dụng |
+| 409 | Booking trùng lịch, tên phòng trùng hoặc chưa có hồ sơ ứng dụng |
 | 413 | Payload vượt giới hạn parser; kích thước body tối đa 100 KiB |
 | 415 | Parser không hỗ trợ encoding/charset của request |
 | 500 | Lỗi nội bộ không dự kiến |
@@ -139,7 +142,7 @@ Ví dụ response của `GET /api/v1/client/users/me`:
 
 Role claim thiếu/sai cấu trúc được chuẩn hóa thành danh sách rỗng; quyền truy cập Client/Admin khi đó bị từ chối với 403. API không trả token hoặc chi tiết lỗi database/JWKS nội bộ.
 
-`error.details` là danh sách thông báo validation; các lỗi khác dùng danh sách rỗng. Lỗi HTTP dùng code `HTTP_<status>`; lỗi không xác định dùng `INTERNAL_SERVER_ERROR`. Các lỗi nghiệp vụ hiện có gồm `INVALID_BOOKING_TIME` (400), `ROOM_UNAVAILABLE`/`ROOM_NOT_FOUND` (404) và `BOOKING_TIME_CONFLICT` (409), `USER_NOT_PROVISIONED` (409), `INVALID_PROFILE_TOKEN` (401) và `PROFILE_SYNC_UNAVAILABLE` (503).
+`error.details` là danh sách thông báo validation; các lỗi khác dùng danh sách rỗng. Lỗi HTTP dùng code `HTTP_<status>`; lỗi không xác định dùng `INTERNAL_SERVER_ERROR`. Các lỗi nghiệp vụ hiện có gồm `INVALID_BOOKING_TIME`/`INVALID_ROOM_INPUT` (400), `ROOM_UNAVAILABLE`/`ROOM_NOT_FOUND` (404), `BOOKING_TIME_CONFLICT`/`ROOM_NAME_CONFLICT` (409), `USER_NOT_PROVISIONED` (409), `INVALID_PROFILE_TOKEN` (401) và `PROFILE_SYNC_UNAVAILABLE` (503).
 
 ```json
 {

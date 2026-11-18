@@ -223,7 +223,22 @@ it('rolls back a failed sync, exposes only availability as 503, then allows retr
   expect(await source.query('SELECT id FROM users')).toHaveLength(1);
 });
 it('adds the nullable watermark without changing legacy user UUIDs or booking foreign keys', async () => {
-  await source.undoLastMigration();
+  // Revert through newer migrations as well: the target is the schema before the watermark, not just HEAD - 1.
+  const applied = await source.query<Array<{ timestamp: string }>>(
+    'SELECT timestamp FROM migrations ORDER BY timestamp DESC',
+  );
+  for (const migration of applied) {
+    if (Number(migration.timestamp) >= 1794800000000) {
+      await source.undoLastMigration();
+    }
+  }
+  expect(
+    await source.query(
+      `SELECT column_name FROM information_schema.columns
+    WHERE table_schema=$1 AND table_name='users' AND column_name='profile_token_iat'`,
+      [schema],
+    ),
+  ).toHaveLength(0);
   const [legacy] = await source.query(
     'INSERT INTO users (keycloak_sub,email) VALUES ($1,$2) RETURNING id',
     [input.sub, 'legacy@example.test'],

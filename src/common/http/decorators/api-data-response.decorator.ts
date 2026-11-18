@@ -1,11 +1,12 @@
 import { applyDecorators } from '@nestjs/common';
 import type { Type } from '@nestjs/common';
-import { ApiExtraModels, ApiOkResponse, getSchemaPath } from '@nestjs/swagger';
+import { ApiExtraModels, ApiResponse, getSchemaPath } from '@nestjs/swagger';
 
-export function ApiDataResponse(model: Type<unknown>): MethodDecorator {
+export function ApiDataResponse(model: Type<unknown>, status: 200 | 201 = 200): MethodDecorator {
   return applyDecorators(
     ApiExtraModels(model),
-    ApiOkResponse({
+    ApiResponse({
+      status,
       schema: {
         type: 'object',
         required: ['data'],

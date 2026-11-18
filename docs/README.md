@@ -9,6 +9,7 @@
 | [Database](database.md) | Schema, constraint, index, migration và ACL bootstrap |
 | [Implementation patterns](implementation-patterns.md) | Ví dụ sử dụng port/adapter, DI và transaction |
 | [User provisioning](user-provisioning.md) | Client sync, đọc hồ sơ, retry và cấp hồ sơ Admin qua CLI |
+| [Admin Room create/update](plans/admin-room-create-update.md) | Contract, luồng triển khai và kiểm thử hai API ghi phòng |
 | [ERD](database.drawio) | Entity và quan hệ dữ liệu |
 
 ## Quy cách biên soạn

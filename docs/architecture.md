@@ -12,7 +12,7 @@ Module được phân chia theo quyền sở hữu hành vi và dữ liệu. Mod
 |---|---|---|
 | Identity | Xác minh token, tạo principal và kiểm tra role; không lưu hồ sơ hoặc truy cập repository Users | Kiểu `Principal`, decorators; JWT/Roles guards được đăng ký toàn cục |
 | Users | Hồ sơ ứng dụng trong `users`, ánh xạ Keycloak `sub` sang UUID nội bộ và đồng bộ profile | `UsersQueryApi.requireBySub(sub)` qua token `USERS_QUERY_API` |
-| Rooms | Dữ liệu `rooms`, use case deactivate và truy cập phòng có khóa | `RoomsBookingAccess` qua `RoomsTransactionFactory` |
+| Rooms | Dữ liệu `rooms`, use case create/update/deactivate và truy cập phòng có khóa | `RoomsBookingAccess` qua `RoomsTransactionFactory` |
 | Bookings | Dữ liệu `bookings`, use case tạo booking, kiểm tra phòng/thời gian và điều phối transaction | Chưa export API cho module khác |
 | Database | Khởi tạo DataSource/pool, cấu hình persistence, lifecycle và migration | Provider `DataSource` |
 | Health | Liveness và database readiness | Controller health/readiness |
@@ -68,6 +68,8 @@ Service là điểm vào use case; entity là mapping persistence. Application n
 ### Client và Admin
 
 `ClientUsersController` và `AdminUsersController` có routing, role policy và response DTO riêng, và cùng đọc qua `UsersService.requireBySub`. Chỉ Client cung cấp `POST /users/sync` để khởi tạo/đồng bộ hồ sơ; Admin được cấp hồ sơ qua CLI. Việc thay đổi contract HTTP của một nhóm không yêu cầu tạo bản sao service hoặc repository.
+
+`AdminRoomsController` cung cấp POST/PATCH quản lý phòng với role Admin. Controller validate/map DTO sang input thuần; Rooms service quyết định trạng thái phòng mới, invariant và lỗi thiếu phòng. Model phản hồi chỉ chứa field công bố trong API contract. Các API Client đọc phòng và HTTP deactivate chưa được triển khai.
 
 Role được kiểm tra ở guard trước khi gọi controller. Quy tắc dữ liệu thuộc use case: ví dụ lấy UUID user qua Users service và kiểm tra trạng thái phòng trong transaction booking. Controller không tự truy vấn database hoặc mở transaction. Quyền HTTP không được suy ra từ tên OAuth client; Employee/Admin được xác định từ role trong principal.
 
@@ -125,6 +127,8 @@ BookingsService.create
 Lookup user trước transaction chỉ đọc UUID đã tồn tại; thiếu hồ sơ ném `UserNotProvisionedError` (409) trước khi mở transaction booking. User được khởi tạo qua sync hoặc CLI. UUID ổn định và FK `ON DELETE RESTRICT` duy trì liên kết booking; transaction booking không cập nhật profile. Input booking chứa `Date`, không chứa request DTO; adapter HTTP/CLI chịu trách nhiệm parse dữ liệu đầu vào.
 
 `RoomsService.deactivate` cũng điều phối UoW: lấy phòng có khóa, ném `RoomNotFoundError` nếu không tồn tại, rồi yêu cầu `setActive(id, false)`. Repository chỉ đọc/ghi trạng thái bằng manager được bind. Phòng đã inactive vẫn được xử lý thành công; deactivate không hủy booking đã có.
+
+Create phòng dùng `RoomCreationRepositoryPort` cho một insert nguyên tử; application đặt `isActive = true`. Update dùng Rooms UoW, khóa row bằng cùng protocol của deactivate/booking, rồi chỉ cập nhật field có trong patch. Field không gửi giữ nguyên; `description: null` xóa mô tả; sửa phòng inactive không kích hoạt lại phòng. DTO và application dùng chung formatter trim/NFC trước kiểm tra độ dài. Unique expression index `rooms_name_key` bảo vệ tên theo NFC và không phân biệt hoa/thường; adapter chỉ map đúng index này sang `RoomNameConflictError` (409), không dùng SELECT kiểm tra trước làm bảo đảm duy nhất.
 
 Sync user là một thao tác persistence nguyên tử qua `upsertIfNewer`. Adapter tự mở transaction để upsert và SELECT fallback khi token cũ/cùng phiên bản; không thêm UoW ngoài tại service. Quy tắc watermark là contract application, điều kiện so sánh được thực thi trong SQL để không mất tính nguyên tử khi có request đồng thời.
 

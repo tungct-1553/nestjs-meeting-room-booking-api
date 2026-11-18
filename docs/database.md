@@ -18,7 +18,7 @@ Hai service dùng chung PostgreSQL container nhưng không đọc hoặc ghi sch
 | Bảng | Dữ liệu | Ràng buộc |
 |---|---|---|
 | `users` | `id` UUID, `keycloak_sub` text; `email`, `display_name` text nullable; `profile_token_iat` double precision nullable; timestamps | PK `id`, UNIQUE `keycloak_sub` |
-| `rooms` | `id` UUID, `name` text, `capacity` integer, `description` text nullable, `is_active` boolean; timestamps | PK `id`, UNIQUE `name`, CHECK `capacity > 0` |
+| `rooms` | `id` UUID, `name` text, `capacity` integer, `description` text nullable, `is_active` boolean; timestamps | PK `id`, unique expression index cho danh tính tên, CHECK `capacity > 0` |
 | `bookings` | `id` UUID, `room_id`, `user_id` UUID, `title` text, `start_at`, `end_at` timestamptz, `status` text; timestamps | PK `id`, FK tới Rooms/Users, CHECK thời gian và status, exclusion constraint |
 
 Một user và một phòng có nhiều booking. `bookings.user_id` tham chiếu UUID ứng dụng; `keycloak_sub` là khóa đồng bộ danh tính, không phải khóa ngoại booking. Email/display name được cập nhật từ token qua endpoint sync như profile snapshot, không quyết định quyền truy cập; role không được lưu trong bảng `users`.
@@ -33,7 +33,15 @@ Hai FK dùng `ON DELETE RESTRICT`, giữ lịch sử booking khi dữ liệu li�
 - TypeORM cập nhật `updated_at` khi adapter thực hiện update. SQL chạy ngoài adapter không được trigger tự động cập nhật timestamp.
 - `is_active` mặc định `true`; status booking mặc định `confirmed`, chỉ nhận `confirmed` hoặc `cancelled`.
 - `start_at`/`end_at` dùng `timestamptz` để biểu diễn thời điểm tuyệt đối. PostgreSQL không giữ timezone gốc của input; cách hiển thị phụ thuộc timezone của session. HTTP serialize thành ISO 8601 UTC, còn input phải có timezone theo [API contract](requirements.md).
-- UNIQUE tên phòng phân biệt chữ hoa/thường.
+- Tên phòng được lưu sau trim và chuẩn hóa NFC, giữ hoa/thường để hiển thị. Unique expression index `rooms_name_key` so sánh theo trim/NFC và lowercase với collation `pg_c_utf8`; không phân biệt hoa/thường nhưng vẫn phân biệt dấu.
+
+### Danh tính tên phòng
+
+PostgreSQL 17 với encoding UTF8 cung cấp `normalize` và collation `pg_c_utf8`. Collation này dùng Unicode simple-case mapping cho `lower`, giúp identity không phụ thuộc locale mặc định của hệ điều hành. Database index áp dụng cùng tập ký tự trim của ECMAScript, gồm cả NBSP/BOM; không chỉ dùng `btrim(name)` mặc định loại dấu cách ASCII. Tham khảo [string functions](https://www.postgresql.org/docs/17/functions-string.html) và [collation](https://www.postgresql.org/docs/17/collation.html).
+
+Index tính identity từ tên, không thêm cột name-key và không đổi tên hiển thị thành chữ thường. [Unique expression index](https://www.postgresql.org/docs/17/indexes-expressional.html) bảo vệ cả thao tác ghi ngoài application và request đồng thời. Duplicate violation vẫn mang tên `rooms_name_key` để adapter map sang `ROOM_NAME_CONFLICT`.
+
+Migration mới khóa bảng và kiểm tra dữ liệu cũ trước khi backfill trim/NFC, thay simple UNIQUE bằng expression index trong cùng transaction. Tên cũ trùng identity hoặc không đạt quy tắc độ dài làm migration dừng; không tự gộp/xóa/đổi tên để tránh mất liên kết booking. Khi thành công, UUID, trạng thái, FK và timestamps được giữ nguyên. Down migration khôi phục simple UNIQUE, giữ tên đã được chuẩn hóa.
 
 ## Ràng buộc lịch và index
 
