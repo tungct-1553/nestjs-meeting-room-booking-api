@@ -145,7 +145,7 @@ create(input: CreateRoomInput): Promise<Room> {
 }
 ```
 
-Policy thuần chuẩn hóa tên và kiểm tra invariant, đặt description mặc định null và `isActive = true`. [Creation adapter](../src/rooms/infrastructure/typeorm-room-creation.repository.ts) lấy repository từ DataSource singleton, insert và map entity sang Room. Không SELECT kiểm tra tên trước insert.
+DTO và policy dùng chung formatter trim/NFC trước khi kiểm tra độ dài tên; policy tiếp tục bảo vệ invariant cho caller ngoài HTTP, đặt description mặc định null và `isActive = true`. [Creation adapter](../src/rooms/infrastructure/typeorm-room-creation.repository.ts) lấy repository từ DataSource singleton, insert và map entity sang Room. Không SELECT kiểm tra tên trước insert; database bảo vệ identity không phân biệt hoa/thường, trong khi tên hiển thị giữ cách viết.
 
 Update giữ việc quyết định lỗi không tìm thấy trong application và dùng UoW hiện có:
 
@@ -164,7 +164,7 @@ async update(input: UpdateRoomInput): Promise<Room> {
 
 `normalizeRoomPatch` chỉ đưa field khác undefined vào patch; null của description được giữ để xóa mô tả. Repository UPDATE các field này rồi đọc model đầy đủ bằng cùng manager trong transaction. Không ghi toàn bộ snapshot cũ hoặc cập nhật `isActive` qua API sửa thông tin.
 
-Creation adapter và Rooms UoW dùng chung [mapper lỗi PostgreSQL](../src/rooms/infrastructure/postgres-room-error.ts): chỉ SQLSTATE `23505` của constraint `rooms_name_key` trở thành `RoomNameConflictError`. UoW map bên ngoài `await transaction(...)`, không bắt lỗi rồi tiếp tục callback như thể thành công. Lỗi khác được ném tiếp.
+Creation adapter và Rooms UoW dùng chung [mapper lỗi PostgreSQL](../src/rooms/infrastructure/postgres-room-error.ts): chỉ SQLSTATE `23505` mang tên unique index `rooms_name_key` trở thành `RoomNameConflictError`. Tên index được giữ khi migration thay quy tắc raw text bằng trim/NFC/lowercase. UoW map bên ngoài `await transaction(...)`, không bắt lỗi rồi tiếp tục callback như thể thành công. Lỗi khác được ném tiếp.
 
 ## 5. Bookings: transaction liên module
 

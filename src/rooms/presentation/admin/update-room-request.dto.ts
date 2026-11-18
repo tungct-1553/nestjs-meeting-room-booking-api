@@ -15,10 +15,16 @@ import {
   MAX_ROOM_CAPACITY,
   MAX_ROOM_NAME_LENGTH,
 } from '../../application/policies/room-details.policy';
+import { formatRoomNameText } from '../../application/policies/room-name-text';
 
 export class UpdateRoomRequestDto {
-  @ApiPropertyOptional({ minLength: 1, maxLength: MAX_ROOM_NAME_LENGTH, pattern: '\\S' })
-  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @ApiPropertyOptional({
+    description:
+      'Trimmed and normalized to NFC before validation; the normalized name must contain 1..200 Unicode code points. Omit to keep the name; display capitalization is preserved.',
+  })
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? formatRoomNameText(value) : value,
+  )
   @ValidateIf((_object, value: unknown) => value !== undefined)
   @IsString()
   @Matches(/\S/)

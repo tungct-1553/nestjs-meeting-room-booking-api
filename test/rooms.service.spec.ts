@@ -57,6 +57,31 @@ describe('Rooms create use case', () => {
       isActive: true,
     });
   });
+
+  it('normalizes canonically equivalent names to NFC without changing display capitalization', async () => {
+    const name = 'Phòng Họp';
+    await service.create({ name: ` \u00a0${name.normalize('NFD')}\ufeff `, capacity: 1 });
+    expect(creator.create).toHaveBeenCalledWith(expect.objectContaining({ name }));
+    lockById.mockResolvedValue({ id: 'room-id', isActive: true });
+    await service.update({ roomId: 'room-id', name: name.normalize('NFD') });
+    expect(updateDetails).toHaveBeenCalledWith('room-id', { name });
+  });
+
+  it('validates the NFC code point length for both use cases, including decomposed input', async () => {
+    const normalized = 'Ắ'.repeat(200);
+    const decomposed = normalized.normalize('NFD');
+    expect([...decomposed].length).toBeGreaterThan(200);
+    await service.create({ name: decomposed, capacity: 1 });
+    expect(creator.create).toHaveBeenCalledWith(expect.objectContaining({ name: normalized }));
+    lockById.mockResolvedValue({ id: 'room-id', isActive: true });
+    await service.update({ roomId: 'room-id', name: decomposed });
+    expect(updateDetails).toHaveBeenCalledWith('room-id', { name: normalized });
+    const tooLong = 'Ắ'.repeat(201).normalize('NFD');
+    expect(() => service.create({ name: tooLong, capacity: 1 })).toThrow(InvalidRoomInputError);
+    await expect(service.update({ roomId: 'room-id', name: tooLong })).rejects.toBeInstanceOf(
+      InvalidRoomInputError,
+    );
+  });
 });
 
 describe('Rooms update use case', () => {

@@ -118,12 +118,13 @@ it('persists normalized create fields and explicit application defaults', async 
   });
 });
 
-it('keeps PostgreSQL integer limits, 200 Unicode characters and case-sensitive uniqueness', async () => {
+it('keeps PostgreSQL integer limits, 200 Unicode characters and case-insensitive name identity', async () => {
   const name = '😀'.repeat(200);
   const response = await create({ name: ` ${name} `, capacity: 2147483647 }).expect(201);
   expect((await row(response.body.data.id)).name).toBe(name);
   await create({ name: 'A', capacity: 1 }).expect(201);
-  await create({ name: 'a', capacity: 1 }).expect(201);
+  const duplicate = await create({ name: 'a', capacity: 1 }).expect(409);
+  expect(duplicate.body.error.code).toBe('ROOM_NAME_CONFLICT');
 });
 
 it('maps an atomic duplicate create race to one success and one safe conflict', async () => {
@@ -136,6 +137,80 @@ it('maps an atomic duplicate create race to one success and one safe conflict', 
   expect(conflict.body.error.code).toBe('ROOM_NAME_CONFLICT');
   expect(JSON.stringify(conflict.body)).not.toContain('INSERT');
   expect(await source.query('SELECT id FROM rooms')).toHaveLength(1);
+});
+
+it('preserves NFC display capitalization, ignores case for identity and keeps accents significant', async () => {
+  const name = 'Phòng Họp';
+  const created = await create({ name: name.normalize('NFD'), capacity: 1 }).expect(201);
+  expect(created.body.data.name).toBe(name);
+  const duplicate = await create({ name: name.toUpperCase(), capacity: 1 }).expect(409);
+  expect(duplicate.body.error.code).toBe('ROOM_NAME_CONFLICT');
+  await create({ name: 'Phong Hop', capacity: 1 }).expect(201);
+  const renamed = await update(created.body.data.id, {
+    name: name.toLowerCase().normalize('NFD'),
+  }).expect(200);
+  expect(renamed.body.data.name).toBe(name.toLowerCase());
+});
+
+it('normalizes before enforcing the name limit for both database-backed API routes', async () => {
+  const name = 'Ắ'.repeat(200);
+  const created = await create({ name: name.normalize('NFD'), capacity: 1 }).expect(201);
+  expect(created.body.data.name).toBe(name);
+  const updated = await update(created.body.data.id, {
+    name: name.toLowerCase().normalize('NFD'),
+  }).expect(200);
+  expect(updated.body.data.name).toBe(name.toLowerCase());
+  expect((await row(created.body.data.id)).name).toBe(name.toLowerCase());
+  const tooLong = 'Ắ'.repeat(201).normalize('NFD');
+  await create({ name: tooLong, capacity: 1 }).expect(400);
+  await update(created.body.data.id, { name: tooLong }).expect(400);
+});
+
+it('arbitrates canonical/case create races using the same named database index', async () => {
+  const name = 'Phòng Họp';
+  const responses = await Promise.all([
+    create({ name: name.normalize('NFD'), capacity: 1 }),
+    create({ name: name.toUpperCase(), capacity: 1 }),
+  ]);
+  expect(responses.map((response) => response.status).sort()).toEqual([201, 409]);
+  expect(responses.find((response) => response.status === 409)!.body.error.code).toBe(
+    'ROOM_NAME_CONFLICT',
+  );
+  const stored = await source.query<Array<{ name: string }>>('SELECT name FROM rooms');
+  expect(stored).toHaveLength(1);
+  expect([name, name.toUpperCase()]).toContain(stored[0].name);
+});
+
+it('rolls back a patch that collides with another room after NFC/case normalization', async () => {
+  await rooms.create({ name: 'Phòng Họp', capacity: 1 });
+  const second = await rooms.create({ name: 'Khác', capacity: 2 });
+  const before = await row(second.id);
+  const conflict = await update(second.id, {
+    name: 'PHÒNG HỌP'.normalize('NFD'),
+    capacity: 3,
+  }).expect(409);
+  expect(conflict.body.error.code).toBe('ROOM_NAME_CONFLICT');
+  expect(await row(second.id)).toEqual(before);
+});
+
+it('enforces identity for external SQL using all native JavaScript trim characters', async () => {
+  await rooms.create({ name: 'Phòng Họp', capacity: 1 });
+  const trimCharacters = Array.from({ length: 0x10000 }, (_, point) =>
+    String.fromCharCode(point),
+  ).filter((character) => character.trim() === '');
+  expect(trimCharacters).toEqual(expect.arrayContaining(['\u00a0', '\ufeff']));
+  for (const character of trimCharacters) {
+    const externalName = `${character}${'PHÒNG HỌP'.normalize('NFD')}${character}`;
+    await expect(
+      source.query('INSERT INTO rooms(name,capacity) VALUES($1,1)', [externalName]),
+    ).rejects.toMatchObject({ driverError: { code: '23505', constraint: 'rooms_name_key' } });
+  }
+  for (const character of ['\u0085', '\u180e', '\u200b']) {
+    expect(character.trim()).toBe(character);
+    await source.query('INSERT INTO rooms(name,capacity) VALUES($1,1)', [
+      `${character}PHÒNG HỌP${character}`,
+    ]);
+  }
 });
 
 it('updates only provided fields and distinguishes description null from omission', async () => {

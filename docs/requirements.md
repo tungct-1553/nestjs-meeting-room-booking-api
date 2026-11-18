@@ -24,7 +24,7 @@ Access token đã xác minh cung cấp Keycloak `sub`. Users đồng bộ hồ s
 - Chỉ phòng active được hiển thị qua Client API và nhận booking mới.
 - Admin tạo, sửa và ngừng hoạt động phòng; ngừng hoạt động bằng `isActive = false`, không xóa cứng lịch sử.
 - Booking đã tồn tại được giữ khi phòng chuyển inactive.
-- Tên phòng được trim hai đầu, dài 1–200 ký tự Unicode và duy nhất có phân biệt hoa/thường. Tên và mô tả không chứa NUL (`\u0000`).
+- Tên phòng được trim hai đầu và chuẩn hóa NFC trước khi kiểm tra độ dài 1–200 Unicode code point. Tên duy nhất không phân biệt hoa/thường; giữ hoa/thường và dấu để hiển thị. NFC/NFD tương đương được coi là cùng tên; dấu khác nhau vẫn phân biệt. Tên và mô tả không chứa NUL (`\u0000`).
 - Capacity nhận JSON number nguyên từ 1 đến 2147483647. Description nhận string hoặc null; không gửi khi tạo được lưu null.
 - PATCH phải có ít nhất một field được sửa. Field không gửi giữ nguyên; `description: null` xóa mô tả; `name`/`capacity` không nhận null. Admin được sửa thông tin phòng inactive; PATCH không nhận `isActive`.
 

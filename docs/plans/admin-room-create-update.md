@@ -1,6 +1,6 @@
 # Admin Room: create và update
 
-Triển khai hai API theo [coding standards](../coding-standards.md). Contract HTTP được cập nhật tại [requirements](../requirements.md); schema hiện có được giữ nguyên.
+Triển khai hai API theo [coding standards](../coding-standards.md). Contract HTTP được cập nhật tại [requirements](../requirements.md). Cột dữ liệu và FK được giữ nguyên; migration bổ sung quy tắc uniqueness cho tên phòng.
 
 ## Contract
 
@@ -13,16 +13,16 @@ Thiếu/sai token trả 401; Employee trả 403. Response `Room` gồm `id`, `na
 
 | Field | Create | Update |
 |---|---|---|
-| `name` | Bắt buộc string, trim hai đầu, dài 1–200 ký tự Unicode | Không gửi giữ nguyên; gửi áp dụng cùng quy tắc |
+| `name` | Bắt buộc string, trim hai đầu và chuẩn hóa NFC trước khi kiểm tra 1–200 Unicode code point | Không gửi giữ nguyên; gửi áp dụng cùng quy tắc |
 | `capacity` | Bắt buộc số nguyên từ 1 đến 2147483647 | Không gửi giữ nguyên; gửi áp dụng cùng giới hạn |
 | `description` | String hoặc null; không gửi lưu null | Không gửi giữ nguyên; null xóa mô tả; string lưu đúng nội dung |
 | `isActive` | Application đặt true | Không được nhận từ body |
 
 JSON number được dùng cho capacity; không ép chuỗi số thành number. `null` không hợp lệ với name/capacity. Body chỉ được chứa các field được công bố; PATCH phải có ít nhất một field có thể sửa. Chuỗi mô tả rỗng được chấp nhận.
 
-Name/description không được chứa NUL (`\u0000`) vì PostgreSQL text không lưu được ký tự này. Giới hạn tên tính theo Unicode code point và áp dụng sau trim; không thêm giới hạn riêng cho description ngoài body limit chung. Giới hạn tên giữ kích thước khóa UNIQUE trong phạm vi index PostgreSQL.
+Name/description không được chứa NUL (`\u0000`) vì PostgreSQL text không lưu được ký tự này. Giới hạn tên tính theo Unicode code point sau trim/NFC; không thêm giới hạn riêng cho description ngoài body limit chung. Giới hạn tên giữ kích thước khóa UNIQUE trong phạm vi index PostgreSQL. Swagger mô tả giới hạn sau chuẩn hóa, không áp đặt maxLength 200 lên chuỗi NFD chưa chuẩn hóa.
 
-Tên duy nhất theo constraint `rooms_name_key`, phân biệt hoa/thường như database hiện tại. Không chuẩn hóa dữ liệu phòng cũ. Trùng tên trả `ROOM_NAME_CONFLICT` có kind `conflict`; tên giữ nguyên khi update không gây conflict. Input không hợp lệ tại application trả lỗi kind `invalid_input`; lỗi SQL khác không được đổi thành conflict.
+Tên hiển thị giữ hoa/thường và dấu sau chuẩn hóa NFC. Danh tính tên không phân biệt hoa/thường; tên có dấu khác nhau vẫn khác nhau. Unique expression index `rooms_name_key` thực thi trim theo ECMAScript, NFC và lowercase theo Unicode simple-case mapping của PostgreSQL 17 `pg_c_utf8`. Trùng danh tính trả `ROOM_NAME_CONFLICT` có kind `conflict`; PATCH cùng phòng với tên tương đương vẫn thành công. Input sai trả lỗi kind `invalid_input`; lỗi SQL khác không được đổi thành conflict.
 
 Admin có thể sửa phòng inactive. PATCH giữ `id`, `isActive` và booking hiện có; không cung cấp chức năng activate/deactivate. Với hai PATCH đồng thời, các field khác nhau được giữ; cùng field nhận giá trị của thao tác cập nhật sau theo thứ tự khóa.
 
@@ -59,9 +59,9 @@ Decorator response chung được mở rộng tối thiểu để Swagger khai b
 
 1. JWT/Roles guards xác thực và kiểm tra Admin.
 2. DTO/Pipe validate cấu trúc và field; controller map sang CreateRoomInput.
-3. Service kiểm tra invariant, trim name, đặt description mặc định null và isActive true.
+3. Service kiểm tra invariant, chuẩn hóa tên bằng formatter dùng chung với DTO, đặt description mặc định null và isActive true.
 4. Creation repository insert và trả Room; UNIQUE tại database bảo vệ cả request đồng thời.
-5. Adapter chỉ map SQLSTATE `23505` của `rooms_name_key` sang RoomNameConflictError; giữ cause nội bộ.
+5. Adapter chỉ map SQLSTATE `23505` của unique index `rooms_name_key` sang RoomNameConflictError; giữ cause nội bộ.
 6. Controller map RoomResponseDto; interceptor tạo envelope, trả 201.
 
 Không dùng SELECT kiểm tra tên trùng trước INSERT.
@@ -94,8 +94,8 @@ Khung 3 giờ: 15 phút contract; 65 phút hai luồng API; 40 phút UT/HTTP; 30
 
 - **Controller UT:** map request/input, id, null/undefined và response whitelist; gọi đúng use case; lỗi application được chuyển tiếp.
 - **Service UT:** create active/default description; input sai không ghi; update thiếu phòng, patch rỗng, giữ field bỏ qua, cho phép xóa description và sửa phòng inactive; thứ tự lock trước update.
-- **HTTP:** token/role, JSON body sai kiểu, field lạ, tên toàn khoảng trắng/200–201 ký tự/Unicode, NUL trong text, capacity biên/sai kiểu, UUID sai, null, empty patch, status/envelope và Swagger 201/200; Admin routes không xuất hiện trong Client document.
-- **PostgreSQL:** create/read row, duplicate create đồng thời, đổi sang tên đã có, update rollback, giữ UUID/isActive/booking, cập nhật đồng thời field khác nhau và cạnh tranh với deactivate; unique violation khác không bị đổi thành lỗi trùng tên.
+- **HTTP:** token/role, JSON body sai kiểu, field lạ, tên toàn khoảng trắng/200–201 code point sau NFC, tên NFD dài hơn 200 trước chuẩn hóa, NUL trong text, capacity biên/sai kiểu, UUID sai, null, empty patch, status/envelope và Swagger 201/200; Admin routes không xuất hiện trong Client document.
+- **PostgreSQL:** create/read row, duplicate create đồng thời qua NFC/NFD/hoa-thường, PATCH tên tương đương cùng phòng hoặc trùng phòng khác, update rollback, giữ UUID/isActive/booking, cập nhật đồng thời field khác nhau và cạnh tranh với deactivate; unique violation khác không bị đổi thành lỗi trùng tên.
 - **Hồi quy:** toàn bộ tests hiện có của Users, Identity, parser/CORS, booking/deactivate và architecture.
 
 Unit test mock port; HTTP test chạy Nest pipeline; integration test dùng database/container test riêng. Mock không được dùng làm bằng chứng cho row lock hoặc UNIQUE khi có tranh chấp.
@@ -103,3 +103,12 @@ Unit test mock port; HTTP test chạy Nest pipeline; integration test dùng data
 ## Review
 
 Subagent triển khai hoàn tất và dừng ghi file trước khi subagent khác review. Reviewer đối chiếu coding standards, contract, dependency, transaction, validation, mapping lỗi, Swagger, style và chất lượng test. Chỉ chốt hoàn tất khi không còn finding cần sửa và các checks đạt.
+
+## Migration và caller audit cho PR #5
+
+- Thêm migration mới, không sửa migration đã chạy. Yêu cầu PostgreSQL 17 trở lên, encoding UTF8 và transaction; khóa bảng Rooms trước preflight/backfill/index replacement.
+- Preflight phát hiện tên cũ không hợp lệ hoặc trùng sau trim/NFC/lowercase. Nếu gặp, dừng trước thay đổi dữ liệu; không tự chọn phòng để xóa, gộp hoặc đổi tên.
+- Backfill tên cũ bằng trim/NFC, giữ hoa/thường, UUID, trạng thái, booking và timestamps. Unique expression index thay simple UNIQUE cũ nhưng giữ tên `rooms_name_key` để mapping lỗi tiếp tục hoạt động.
+- Down migration khôi phục simple UNIQUE cũ; không tái tạo biểu diễn Unicode/khoảng trắng ban đầu đã chuẩn hóa.
+- Rà soát formatter, cả DTO, policy create/PATCH, service, repository/error mapper, entity metadata, Swagger và test migration run/undo. Test watermark phải thực sự quay về trước migration watermark dù đã có migration Room mới.
+- Review độc lập bao gồm caller và các trường hợp NFC/NFD, chữ hoa/thường, Unicode whitespace, giới hạn sau chuẩn hóa, dữ liệu cũ, rollback và concurrency.

@@ -3,15 +3,19 @@ import type { CreateRoomInput } from '../inputs/create-room.input';
 import type { UpdateRoomInput } from '../inputs/update-room.input';
 import type { RoomDetailsPatch } from '../models/room';
 import type { NewRoom } from '../ports/room-creation-repository.port';
+import { formatRoomNameText } from './room-name-text';
 
 export const MAX_ROOM_CAPACITY = 2147483647;
 export const MAX_ROOM_NAME_LENGTH = 200;
 
 function normalizeName(value: unknown): string {
-  if (typeof value !== 'string' || value.trim().length === 0) {
+  if (typeof value !== 'string') {
     throw new InvalidRoomInputError('Room name must be a non-empty string');
   }
-  const name = value.trim();
+  const name = formatRoomNameText(value);
+  if (name.length === 0) {
+    throw new InvalidRoomInputError('Room name must be a non-empty string');
+  }
   if ([...name].length > MAX_ROOM_NAME_LENGTH || name.includes('\0')) {
     throw new InvalidRoomInputError(
       `Room name must contain at most ${MAX_ROOM_NAME_LENGTH} characters and no NUL`,

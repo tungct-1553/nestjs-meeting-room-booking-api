@@ -206,6 +206,12 @@ describe('Admin rooms HTTP', () => {
     const createSchema = admin.body.components.schemas.CreateRoomRequestDto;
     expect(createSchema.required).toEqual(['name', 'capacity']);
     expect(createSchema.properties.capacity.maximum).toBe(2147483647);
+    for (const schema of [createSchema, admin.body.components.schemas.UpdateRoomRequestDto]) {
+      expect(schema.properties.name.maxLength).toBeUndefined();
+      expect(schema.properties.name.description).toContain('NFC');
+      expect(schema.properties.name.description).toContain('normalized name');
+      expect(schema.properties.name.description).toContain('1..200');
+    }
     expect(admin.body.components.schemas.UpdateRoomRequestDto.required).toBeUndefined();
     const client = await request(app.getHttpServer())
       .get('/api/v1/docs/client/openapi.json')
@@ -233,6 +239,28 @@ describe('Admin rooms HTTP', () => {
 
   it('rejects 201 Unicode code points consistently at both HTTP boundaries', async () => {
     const name = '😀'.repeat(201);
+    await create({ name, capacity: 1 }).expect(400);
+    await update({ name }).expect(400);
+    expect(creator.create).not.toHaveBeenCalled();
+    expect(transaction.lockById).not.toHaveBeenCalled();
+  });
+
+  it('applies NFC before DTO length validation and keeps display case on both routes', async () => {
+    const name = 'Ắ'.repeat(200);
+    creator.create.mockImplementationOnce(async (input) => ({ ...room, ...input }));
+    const created = await create({ name: ` ${name.normalize('NFD')} `, capacity: 1 }).expect(201);
+    expect(created.body.data.name).toBe(name);
+    expect(creator.create).toHaveBeenCalledWith(expect.objectContaining({ name }));
+    const patchName = 'Phòng Họp';
+    const updated = await update({ name: patchName.normalize('NFD') }).expect(200);
+    expect(updated.body.data.name).toBe(patchName);
+    const longestPatch = await update({ name: name.normalize('NFD') }).expect(200);
+    expect(longestPatch.body.data.name).toBe(name);
+    expect(transaction.updateDetails).toHaveBeenCalledWith(room.id, { name });
+  });
+
+  it('rejects 201 NFC code points even when the raw input is decomposed', async () => {
+    const name = 'Ắ'.repeat(201).normalize('NFD');
     await create({ name, capacity: 1 }).expect(400);
     await update({ name }).expect(400);
     expect(creator.create).not.toHaveBeenCalled();
