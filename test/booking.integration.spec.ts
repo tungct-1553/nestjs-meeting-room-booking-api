@@ -285,10 +285,7 @@ it('keeps deactivate idempotent and reports missing rooms from application', asy
 
 it('cancels once, preserves booking history and allows cancellation after room deactivation', async () => {
   const created = await service.create(createInput());
-  await new RoomsService(
-    new TypeormRoomsUnitOfWork(source),
-    new TypeormRoomCreationRepository(source),
-  ).deactivate(roomId);
+  await source.query('UPDATE rooms SET is_active=false WHERE id=$1', [roomId]);
   const cancelled = await service.cancel({ actorSub: principal.sub, bookingId: created.id });
   expect(cancelled).toEqual({ ...created, status: 'cancelled' });
   const before = await source.query('SELECT *, xmin::text AS version FROM bookings WHERE id=$1', [

@@ -364,7 +364,7 @@ describe('Identity HTTP with signed JWT and JWKS', () => {
       const response = await request(app.getHttpServer())
         .get(`/api/v1/docs/${zone}/openapi.json`)
         .expect(200);
-      const paths: string[] = Object.keys(response.body.paths);
+      const paths = Object.keys(response.body.paths);
       expect(paths.every((path) => path.startsWith(`/api/v1/${zone}/`))).toBe(true);
       expect(paths.filter((path) => path.startsWith(`/api/v1/${zone}/users`))).toEqual(
         zone === 'client'
