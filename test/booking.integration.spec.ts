@@ -11,6 +11,9 @@ import { TypeormUserRepository } from '../src/users/infrastructure/typeorm-user.
 import { UsersService } from '../src/users/application/users.service';
 import { BookingsService } from '../src/bookings/application/bookings.service';
 import {
+  BookingNotFoundError,
+  BookingOwnerRequiredError,
+  InvalidBookingTimeError,
   BookingTimeConflictError,
   RoomUnavailableError,
 } from '../src/bookings/application/errors/booking.errors';
@@ -68,7 +71,7 @@ async function waitForBlockedTransaction(): Promise<void> {
     'SELECT pid, state, wait_event_type, wait_event, application_name, pg_blocking_pids(pid) AS blockers FROM pg_stat_activity WHERE datname=current_database()',
   );
   throw new Error(
-    `Expected a transaction waiting for the room row lock: ${JSON.stringify({ activity, connections })}`,
+    `Expected a transaction waiting for a row lock: ${JSON.stringify({ activity, connections })}`,
   );
 }
 beforeAll(async () => {
@@ -136,15 +139,16 @@ it('serializes same-room booking requests and maps an overlapping insert to conf
   expect(rejected.reason).toBeInstanceOf(BookingTimeConflictError);
 });
 it('allows adjacent slots and releases cancelled slots', async () => {
-  await service.create(createInput());
+  const first = await service.create(createInput());
   await service.create({
     ...createInput(),
     startAt: new Date('2099-01-01T11:00:00Z'),
     endAt: new Date('2099-01-01T12:00:00Z'),
   });
-  await source.query("UPDATE bookings SET status = 'cancelled'");
+  await service.cancel({ actorSub: principal.sub, bookingId: first.id });
   await service.create(createInput());
-  expect((await source.query("SELECT id FROM bookings WHERE status='confirmed'")).length).toBe(1);
+  expect((await source.query("SELECT id FROM bookings WHERE status='confirmed'")).length).toBe(2);
+  expect((await source.query('SELECT id FROM bookings')).length).toBe(3);
 });
 it('rolls back writes on callback failure and rejects escaped transaction ports', async () => {
   let escaped!: BookingTransaction;
@@ -159,6 +163,10 @@ it('rolls back writes on callback failure and rejects escaped transaction ports'
   expect(await source.query('SELECT id FROM bookings')).toHaveLength(0);
   await expect(escaped.rooms.lockForBooking(roomId)).rejects.toThrow('active transaction');
   await expect(escaped.bookings.insert(input())).rejects.toThrow('active transaction');
+  await expect(escaped.bookings.lockById(randomUUID())).rejects.toThrow('active transaction');
+  await expect(escaped.bookings.updateStatus(randomUUID(), 'cancelled')).rejects.toThrow(
+    'active transaction',
+  );
   await service.create(createInput());
 });
 it('rejects a booking after deactivate commits first while it waits for the room lock', async () => {
@@ -273,4 +281,170 @@ it('keeps deactivate idempotent and reports missing rooms from application', asy
   expect(
     (await source.query('SELECT is_active FROM rooms WHERE id=$1', [roomId]))[0].is_active,
   ).toBe(false);
+});
+
+it('cancels once, preserves booking history and allows cancellation after room deactivation', async () => {
+  const created = await service.create(createInput());
+  await new RoomsService(
+    new TypeormRoomsUnitOfWork(source),
+    new TypeormRoomCreationRepository(source),
+  ).deactivate(roomId);
+  const cancelled = await service.cancel({ actorSub: principal.sub, bookingId: created.id });
+  expect(cancelled).toEqual({ ...created, status: 'cancelled' });
+  const before = await source.query('SELECT *, xmin::text AS version FROM bookings WHERE id=$1', [
+    created.id,
+  ]);
+  await expect(service.cancel({ actorSub: principal.sub, bookingId: created.id })).resolves.toEqual(
+    cancelled,
+  );
+  expect(
+    await source.query('SELECT *, xmin::text AS version FROM bookings WHERE id=$1', [created.id]),
+  ).toEqual(before);
+  expect(await source.query('SELECT id FROM bookings')).toHaveLength(1);
+});
+
+it('returns missing/owner errors and rolls back an unauthorized cancellation', async () => {
+  await expect(
+    service.cancel({ actorSub: principal.sub, bookingId: randomUUID() }),
+  ).rejects.toBeInstanceOf(BookingNotFoundError);
+  const created = await service.create(createInput());
+  await new TypeormUserRepository(source).upsertIfNewer({
+    sub: 'other-sub',
+    email: null,
+    displayName: null,
+    issuedAt: 100,
+  });
+  const before = await source.query('SELECT *, xmin::text AS version FROM bookings WHERE id=$1', [
+    created.id,
+  ]);
+  await expect(
+    service.cancel({ actorSub: 'other-sub', bookingId: created.id }),
+  ).rejects.toBeInstanceOf(BookingOwnerRequiredError);
+  expect(
+    await source.query('SELECT *, xmin::text AS version FROM bookings WHERE id=$1', [created.id]),
+  ).toEqual(before);
+  await expect(service.create(createInput())).rejects.toBeInstanceOf(BookingTimeConflictError);
+});
+
+it('serializes concurrent cancellation requests and returns the same cancelled resource', async () => {
+  const created = await service.create(createInput());
+  const owner = source.createQueryRunner();
+  await owner.connect();
+  await owner.startTransaction();
+  let waiting: Promise<unknown> | undefined;
+  try {
+    await owner.query('SELECT id FROM bookings WHERE id=$1 FOR UPDATE', [created.id]);
+    waiting = Promise.all([
+      service.cancel({ actorSub: principal.sub, bookingId: created.id }),
+      service.cancel({ actorSub: principal.sub, bookingId: created.id }),
+    ]);
+    await waitForBlockedTransaction();
+    await owner.commitTransaction();
+    expect(await waiting).toEqual([
+      { ...created, status: 'cancelled' },
+      { ...created, status: 'cancelled' },
+    ]);
+    expect(await source.query('SELECT id FROM bookings')).toHaveLength(1);
+  } finally {
+    if (owner.isTransactionActive) {
+      await owner.rollbackTransaction();
+    }
+    await owner.release();
+    if (waiting) {
+      await waiting;
+    }
+  }
+});
+
+it('rolls back cancellation status if its transaction fails', async () => {
+  const created = await service.create(createInput());
+  await expect(
+    uow.run(async ({ bookings }) => {
+      await bookings.lockById(created.id);
+      await bookings.updateStatus(created.id, 'cancelled');
+      throw new Error('cancel rollback');
+    }),
+  ).rejects.toThrow('cancel rollback');
+  expect(
+    (await source.query('SELECT status FROM bookings WHERE id=$1', [created.id]))[0].status,
+  ).toBe('confirmed');
+  await expect(service.create(createInput())).rejects.toBeInstanceOf(BookingTimeConflictError);
+});
+
+it('allows a waiting create after an uncommitted cancellation releases its exclusion entry', async () => {
+  const created = await service.create(createInput());
+  const updated = deferred();
+  const release = deferred();
+  const cancelling = uow.run(async ({ bookings }) => {
+    await bookings.lockById(created.id);
+    await bookings.updateStatus(created.id, 'cancelled');
+    updated.resolve();
+    await release.promise;
+  });
+  await updated.promise;
+  const creating = service.create(createInput());
+  try {
+    const deadline = Date.now() + 5000;
+    let waiting = false;
+    while (Date.now() < deadline) {
+      const rows = await source.query(
+        "SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND application_name=$1 AND wait_event_type='Lock' AND query LIKE 'INSERT%'",
+        [schema],
+      );
+      if (rows.length > 0) {
+        waiting = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(waiting).toBe(true);
+  } finally {
+    release.resolve();
+    await cancelling;
+  }
+  const replacement = await creating;
+  expect(replacement.id).not.toBe(created.id);
+  expect(replacement.status).toBe('confirmed');
+  expect(await source.query('SELECT id FROM bookings')).toHaveLength(2);
+});
+
+it('rechecks booking start time after PostgreSQL releases a contended room lock', async () => {
+  const owner = source.createQueryRunner();
+  await owner.connect();
+  await owner.startTransaction();
+  let waiting: Promise<unknown> | undefined;
+  try {
+    await owner.query('SELECT id FROM rooms WHERE id=$1 FOR UPDATE', [roomId]);
+    waiting = service.create(createInput()).then(
+      () => 'unexpected success',
+      (error: unknown) => error,
+    );
+    await waitForBlockedTransaction();
+    jest.spyOn(Date, 'now').mockReturnValue(dates.startAt.getTime() + 1);
+    await owner.commitTransaction();
+    expect(await waiting).toBeInstanceOf(InvalidBookingTimeError);
+    expect(await source.query('SELECT id FROM bookings')).toHaveLength(0);
+  } finally {
+    jest.restoreAllMocks();
+    if (owner.isTransactionActive) {
+      await owner.rollbackTransaction();
+    }
+    await owner.release();
+    if (waiting) {
+      await waiting;
+    }
+  }
+});
+
+it('allows the owner to cancel a booking whose scheduled time has ended', async () => {
+  const created = await uow.run(async ({ bookings }) =>
+    bookings.insert({
+      ...input(),
+      startAt: new Date('2000-01-01T10:00:00Z'),
+      endAt: new Date('2000-01-01T11:00:00Z'),
+    }),
+  );
+  await expect(service.cancel({ actorSub: principal.sub, bookingId: created.id })).resolves.toEqual(
+    { ...created, status: 'cancelled' },
+  );
 });
