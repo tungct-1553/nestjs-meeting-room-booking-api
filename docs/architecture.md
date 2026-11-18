@@ -13,7 +13,7 @@ Module được phân chia theo quyền sở hữu hành vi và dữ liệu. Mod
 | Identity | Xác minh token, tạo principal và kiểm tra role; không lưu hồ sơ hoặc truy cập repository Users | Kiểu `Principal`, decorators; JWT/Roles guards được đăng ký toàn cục |
 | Users | Hồ sơ ứng dụng trong `users`, ánh xạ Keycloak `sub` sang UUID nội bộ và đồng bộ profile | `UsersQueryApi.requireBySub(sub)` qua token `USERS_QUERY_API` |
 | Rooms | Dữ liệu `rooms`, use case create/update/deactivate và truy cập phòng có khóa | `RoomsBookingAccess` qua `RoomsTransactionFactory` |
-| Bookings | Dữ liệu `bookings`, create/cancel, kiểm tra owner/phòng/thời gian và điều phối transaction | Chưa export API cho module khác |
+| Bookings | Dữ liệu `bookings`, use case tạo booking, kiểm tra phòng/thời gian và điều phối transaction | Chưa export API cho module khác |
 | Database | Khởi tạo DataSource/pool, cấu hình persistence, lifecycle và migration | Provider `DataSource` |
 | Health | Liveness và database readiness | Controller health/readiness |
 
@@ -71,8 +71,6 @@ Service là điểm vào use case; entity là mapping persistence. Application n
 
 `AdminRoomsController` cung cấp POST/PATCH quản lý phòng với role Admin. Controller validate/map DTO sang input thuần; Rooms service quyết định trạng thái phòng mới, invariant và lỗi thiếu phòng. Model phản hồi chỉ chứa field công bố trong API contract. Các API Client đọc phòng và HTTP deactivate chưa được triển khai.
 
-`ClientBookingsController` cung cấp POST/DELETE cho Employee/Admin. Controller lấy `actorSub` từ principal, chuyển timestamp sang `Date` và trả DTO với thời gian ISO UTC; application lookup UUID user và kiểm tra owner khi hủy. GET Booking chưa được triển khai.
-
 Role được kiểm tra ở guard trước khi gọi controller. Quy tắc dữ liệu thuộc use case: ví dụ lấy UUID user qua Users service và kiểm tra trạng thái phòng trong transaction booking. Controller không tự truy vấn database hoặc mở transaction. Quyền HTTP không được suy ra từ tên OAuth client; Employee/Admin được xác định từ role trong principal.
 
 ## 3. Contract, DI và giao tiếp giữa module
@@ -116,7 +114,6 @@ Có hai hình thức giao tiếp:
 
 ```text
 BookingsService.create
-  → kiểm tra và trim title
   → UsersQueryApi.requireBySub(input.actorSub) → users.id
   → BookingUnitOfWork.run(callback)
       → mở transaction READ COMMITTED
@@ -128,10 +125,6 @@ BookingsService.create
 ```
 
 Lookup user trước transaction chỉ đọc UUID đã tồn tại; thiếu hồ sơ ném `UserNotProvisionedError` (409) trước khi mở transaction booking. User được khởi tạo qua sync hoặc CLI. UUID ổn định và FK `ON DELETE RESTRICT` duy trì liên kết booking; transaction booking không cập nhật profile. Input booking chứa `Date`, không chứa request DTO; adapter HTTP/CLI chịu trách nhiệm parse dữ liệu đầu vào.
-
-`BookingsService.cancel` lookup UUID user trước UoW, sau đó khóa row booking bằng `FOR UPDATE`. Service ném `BookingNotFoundError` khi thiếu row, `BookingOwnerRequiredError` khi khác owner; Admin không được bỏ qua owner. Nếu đã cancelled, trả model hiện có mà không ghi; nếu confirmed, yêu cầu repository cập nhật status `cancelled` bằng cùng manager. Không kiểm tra trạng thái phòng hoặc thời gian khi hủy.
-
-Cancel chỉ khóa booking, không khóa phòng; create khóa phòng rồi insert và không yêu cầu khóa booking cũ. Exclusion constraint có thể chờ cancellation chưa commit rồi cho phép đặt lại khoảng giờ đã giải phóng. Create cạnh tranh vẫn có thể trả conflict nếu cancellation chưa cập nhật; create sau khi cancel thành công phải đặt lại được. Luồng này không thêm chu trình lấy khóa phòng/booking.
 
 `RoomsService.deactivate` cũng điều phối UoW: lấy phòng có khóa, ném `RoomNotFoundError` nếu không tồn tại, rồi yêu cầu `setActive(id, false)`. Repository chỉ đọc/ghi trạng thái bằng manager được bind. Phòng đã inactive vẫn được xử lý thành công; deactivate không hủy booking đã có.
 

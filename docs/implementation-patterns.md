@@ -194,7 +194,7 @@ return await this.source.transaction('READ COMMITTED', (manager) =>
 
 [RoomsTransactionFactory](../src/rooms/infrastructure/public/rooms-transaction.factory.ts) thuộc infrastructure của Rooms. Factory bind `TypeormRoomRepository` và chỉ công bố `lockForBooking`; application Bookings không thấy entity hoặc manager. Đây là điểm tích hợp persistence tường minh giữa hai module dùng cùng PostgreSQL/TypeORM.
 
-[BookingsService](../src/bookings/application/bookings.service.ts) nhận `CreateBookingInput` chứa `actorSub` và `Date`; adapter HTTP/CLI parse dữ liệu trước khi gọi. Service trim/validate title bằng `normalizeBookingTitle`, lookup user rồi thực hiện:
+[BookingsService](../src/bookings/application/bookings.service.ts) nhận `CreateBookingInput` chứa `actorSub` và `Date`; adapter HTTP/CLI parse dữ liệu trước khi gọi. Sau lookup user, service thực hiện:
 
 ```ts
 return this.uow.run(async ({ rooms, bookings }) => {
@@ -208,7 +208,7 @@ return this.uow.run(async ({ rooms, bookings }) => {
   return bookings.insert({
     roomId: room.id,
     userId: user.id,
-    title,
+    title: input.title,
     startAt: input.startAt,
     endAt: input.endAt,
     status: 'confirmed',
@@ -217,26 +217,6 @@ return this.uow.run(async ({ rooms, bookings }) => {
 ```
 
 Thời gian được kiểm tra sau row lock vì request có thể phải chờ đến khi startAt không còn ở tương lai. Application chọn trạng thái; repository không tự gán `confirmed`. Row lock bảo vệ trạng thái phòng; exclusion constraint bảo vệ lịch trùng, kể cả ghi ngoài use case.
-
-Cancellation dùng cùng UoW nhưng chỉ truy cập booking repository:
-
-```ts
-return this.uow.run(async ({ bookings }) => {
-  const booking = await bookings.lockById(input.bookingId);
-  if (booking === null) {
-    throw new BookingNotFoundError();
-  }
-  if (booking.userId !== user.id) {
-    throw new BookingOwnerRequiredError();
-  }
-  if (booking.status === 'cancelled') {
-    return booking;
-  }
-  return bookings.updateStatus(booking.id, 'cancelled');
-});
-```
-
-`user` được lookup từ `actorSub` trước callback. `lockById` dùng `FOR UPDATE`, trả model/null; `updateStatus` nhận trạng thái application chọn, UPDATE rồi đọc model bằng cùng manager. Quyền owner được kiểm tra trước cả nhánh hủy lặp lại. Không lấy khóa phòng khi hủy và không xóa dòng booking.
 
 Repository Rooms/Bookings kiểm tra manager còn active trước thao tác. Không giữ chúng ngoài callback, đăng ký singleton hoặc dùng DataSource để ghi ngoài manager đang bind.
 

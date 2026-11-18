@@ -64,7 +64,7 @@ Response JSON, field ngày giờ serialize ISO 8601 UTC. Quy ước envelope:
 
 ## 4. Endpoint
 
-Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong envelope `data`. Health, sync và hai endpoint đọc hồ sơ đã có HTTP; POST/PATCH Admin Room được triển khai trong phần quản lý phòng. POST/DELETE Client Booking đã có HTTP; GET Booking và các endpoint Room còn lại là contract cho phần nghiệp vụ tiếp theo.
+Ký hiệu `User`, `Room`, `Booking` trong bảng là dữ liệu bên trong envelope `data`.
 
 ### Health và hồ sơ
 

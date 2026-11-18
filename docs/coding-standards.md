@@ -119,7 +119,6 @@ Application sở hữu **ý nghĩa nghiệp vụ**; adapter sở hữu **cách b
 | Create room | Validate/normalize input, đặt active mặc định và gọi port tạo nguyên tử | INSERT, map row, chuyển lỗi unique tên đã biết |
 | Update room | Validate patch, điều phối UoW và quyết định lỗi không tìm thấy | Khóa row, cập nhật field được gửi và trả model đầy đủ |
 | Deactivate room | Mở phạm vi UoW, kiểm tra phòng tồn tại, yêu cầu `isActive = false` | Khóa row, trả snapshot, cập nhật bằng manager được bind |
-| Cancel booking | Lookup actor, kiểm tra tồn tại/owner và chọn cancelled; giữ nhánh idempotent không ghi | Khóa row booking, cập nhật status theo input bằng manager được bind |
 | Create booking | Lookup actor, kiểm tra phòng/thời gian trong UoW, chọn `status = confirmed` | Khóa phòng, insert và bảo vệ exclusion constraint |
 
 Repository không ném lỗi “phòng không tồn tại” thay cho application khi kết quả lookup có thể biểu diễn bằng `null`. Repository không tự thêm `status = confirmed`; trạng thái được application truyền vào. Default/constraint trong schema tiếp tục là lớp bảo vệ dữ liệu.
