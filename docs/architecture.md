@@ -12,7 +12,7 @@ Module được phân chia theo quyền sở hữu hành vi và dữ liệu. Mod
 |---|---|---|
 | Identity | Xác minh token, tạo principal và kiểm tra role; không lưu hồ sơ hoặc truy cập repository Users | Kiểu `Principal`, decorators; JWT/Roles guards được đăng ký toàn cục |
 | Users | Hồ sơ ứng dụng trong `users`, ánh xạ Keycloak `sub` sang UUID nội bộ và đồng bộ profile | `UsersQueryApi.requireBySub(sub)` qua token `USERS_QUERY_API` |
-| Rooms | Dữ liệu `rooms`, use case create/update/deactivate và truy cập phòng có khóa | `RoomsBookingAccess` qua `RoomsTransactionFactory` |
+| Rooms | Dữ liệu `rooms`, use case list/detail/create/update/deactivate và truy cập phòng có khóa | `RoomsBookingAccess` qua `RoomsTransactionFactory` |
 | Bookings | Dữ liệu `bookings`, use case tạo booking, kiểm tra phòng/thời gian và điều phối transaction | Chưa export API cho module khác |
 | Database | Khởi tạo DataSource/pool, cấu hình persistence, lifecycle và migration | Provider `DataSource` |
 | Health | Liveness và database readiness | Controller health/readiness |
@@ -69,9 +69,11 @@ Service là điểm vào use case; entity là mapping persistence. Application n
 
 `ClientUsersController` và `AdminUsersController` có routing, role policy và response DTO riêng, và cùng đọc qua `UsersService.requireBySub`. Chỉ Client cung cấp `POST /users/sync` để khởi tạo/đồng bộ hồ sơ; Admin được cấp hồ sơ qua CLI. Việc thay đổi contract HTTP của một nhóm không yêu cầu tạo bản sao service hoặc repository.
 
-`AdminRoomsController` cung cấp POST/PATCH quản lý phòng với role Admin. Controller validate/map DTO sang input thuần; Rooms service quyết định trạng thái phòng mới, invariant và lỗi thiếu phòng. Model phản hồi chỉ chứa field công bố trong API contract. Các API Client đọc phòng và HTTP deactivate chưa được triển khai.
+`AdminRoomsController` cung cấp POST/PATCH/DELETE quản lý phòng với role Admin. `ClientRoomsController` cung cấp GET list/detail cho Employee/Admin và có response DTO riêng. Controller validate/map DTO sang input thuần; Rooms service quyết định trạng thái phòng mới, invariant và lỗi thiếu phòng. Model phản hồi chỉ chứa field công bố trong API contract. List/detail dùng `RoomReadRepositoryPort` để chỉ trả phòng active; service quyết định lỗi khi lookup trả null. List trả model phân trang thuần, controller chuyển thành `PaginatedResponse`.
 
 Role được kiểm tra ở guard trước khi gọi controller. Quy tắc dữ liệu thuộc use case: ví dụ lấy UUID user qua Users service và kiểm tra trạng thái phòng trong transaction booking. Controller không tự truy vấn database hoặc mở transaction. Quyền HTTP không được suy ra từ tên OAuth client; Employee/Admin được xác định từ role trong principal.
+
+Read adapter là singleton nhận DataSource. List/count chạy trong một transaction `REPEATABLE READ` để cùng snapshot; chỉ đọc, không khóa row. Detail dùng một SELECT. Các luồng ghi tiếp tục dùng `READ COMMITTED` và protocol khóa hiện có.
 
 ## 3. Contract, DI và giao tiếp giữa module
 

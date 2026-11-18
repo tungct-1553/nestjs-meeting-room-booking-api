@@ -129,7 +129,7 @@ Repository không ném lỗi “phòng không tồn tại” thay cho applicatio
 - Repository trong callback chỉ dùng manager được bind, không tự mở transaction hoặc lấy repository từ DataSource singleton. Promise của mọi thao tác phải được `await` hoặc trả về từ callback; không chạy fire-and-forget.
 - Một thao tác persistence nguyên tử như `upsertIfNewer` được phép mở transaction nội bộ để hoàn thành chính contract đó. Không tạo thêm UoW ở service chỉ để bọc một method nguyên tử.
 - Không chuyển điều kiện watermark thành SELECT rồi so sánh/UPDATE tại service. Điều đó làm mất bảo đảm khi có request đồng thời.
-- `READ COMMITTED` là isolation level của các luồng hiện tại. Sync giữ khóa conflict đến khi SELECT fallback xong; booking/deactivate cùng khóa row phòng. Không đổi isolation hoặc loại khóa như một thay đổi style code.
+- `READ COMMITTED` là isolation level của các luồng ghi hiện tại. Read adapter của list phòng dùng `REPEATABLE READ` cho hai SELECT items/count cùng snapshot, không khóa row. Sync giữ khóa conflict đến khi SELECT fallback xong; booking/deactivate cùng khóa row phòng. Không đổi isolation hoặc loại khóa như một thay đổi style code.
 - Sau khi chờ khóa phòng, application phải kiểm tra lại active và thời gian bắt đầu. Exclusion constraint vẫn là bảo vệ cuối cho lịch trùng.
 - Không gọi mạng, mở transaction độc lập hoặc gọi service dùng pool ngoài giữa callback rồi coi đó là cùng transaction.
 - DataSource/pool chỉ được tạo trong DatabaseModule; lifecycle đóng pool khi shutdown. Migration CLI và script local chạy trong tiến trình riêng.

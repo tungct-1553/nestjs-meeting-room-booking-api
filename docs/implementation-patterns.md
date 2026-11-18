@@ -164,6 +164,8 @@ async update(input: UpdateRoomInput): Promise<Room> {
 
 `normalizeRoomPatch` chỉ đưa field khác undefined vào patch; null của description được giữ để xóa mô tả. Repository UPDATE các field này rồi đọc model đầy đủ bằng cùng manager trong transaction. Không ghi toàn bộ snapshot cũ hoặc cập nhật `isActive` qua API sửa thông tin.
 
+List/detail dùng [RoomReadRepositoryPort](../src/rooms/application/ports/room-read-repository.port.ts), trả model thuần và chỉ đọc phòng active. [Read adapter](../src/rooms/infrastructure/typeorm-room-read.repository.ts) dùng DataSource singleton; list/count cùng transaction `REPEATABLE READ`, không lấy row lock. Search trim/NFC ở application, adapter escape literal wildcard và bind parameter. Controller map `RoomPage.items` thành DTO và `PaginatedResponse`; interceptor giữ một envelope gồm `data` và `meta`. Detail trả null từ adapter để application quyết định `RoomNotFoundError`.
+
 Creation adapter và Rooms UoW dùng chung [mapper lỗi PostgreSQL](../src/rooms/infrastructure/postgres-room-error.ts): chỉ SQLSTATE `23505` mang tên unique index `rooms_name_key` trở thành `RoomNameConflictError`. Tên index được giữ khi migration thay quy tắc raw text bằng trim/NFC/lowercase. UoW map bên ngoài `await transaction(...)`, không bắt lỗi rồi tiếp tục callback như thể thành công. Lỗi khác được ném tiếp.
 
 ## 5. Bookings: transaction liên module
