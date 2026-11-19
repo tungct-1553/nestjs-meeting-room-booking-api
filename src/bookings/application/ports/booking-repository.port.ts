@@ -11,4 +11,6 @@ export interface InsertBookingInput {
 
 export interface BookingRepositoryPort {
   insert(input: InsertBookingInput): Promise<Booking>;
+  lockById(id: string): Promise<Booking | null>;
+  updateStatus(id: string, status: BookingStatus): Promise<Booking>;
 }

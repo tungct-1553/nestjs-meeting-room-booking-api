@@ -30,11 +30,12 @@ Access token đã xác minh cung cấp Keycloak `sub`. Users đồng bộ hồ s
 
 ### Booking
 
+- Title được trim hai đầu, dài 1–200 Unicode code point và không chứa NUL (`\u0000`).
 - Một booking thuộc một phòng và một user. `startAt`/`endAt` phải là ISO 8601 có timezone; `startAt < endAt` và chỉ tạo booking bắt đầu trong tương lai.
 - Khoảng thời gian là `[startAt, endAt)`: booking kết thúc đúng lúc booking khác bắt đầu được phép.
 - Booking `confirmed` giữ phòng; booking `cancelled` không giữ phòng. Hai booking confirmed cùng phòng không được giao nhau, kể cả khi tạo đồng thời.
 - Danh sách chỉ trả booking của người gọi. Xem chi tiết và hủy yêu cầu owner; không phải owner trả 403, không tồn tại trả 404.
-- Hủy chuyển trạng thái sang `cancelled`; hủy lặp lại trả booking đã hủy.
+- Hủy chuyển trạng thái sang `cancelled`; hủy lặp lại trả booking đã hủy mà không ghi lại. Cho phép hủy khi phòng inactive hoặc lịch đã bắt đầu/kết thúc; giữ toàn bộ lịch sử.
 
 ## 3. Quy ước HTTP
 
@@ -144,7 +145,7 @@ Ví dụ response của `GET /api/v1/client/users/me`:
 
 Role claim thiếu/sai cấu trúc được chuẩn hóa thành danh sách rỗng; quyền truy cập Client/Admin khi đó bị từ chối với 403. API không trả token hoặc chi tiết lỗi database/JWKS nội bộ.
 
-`error.details` là danh sách thông báo validation; các lỗi khác dùng danh sách rỗng. Lỗi HTTP dùng code `HTTP_<status>`; lỗi không xác định dùng `INTERNAL_SERVER_ERROR`. Các lỗi nghiệp vụ hiện có gồm `INVALID_BOOKING_TIME`/`INVALID_ROOM_INPUT` (400), `ROOM_UNAVAILABLE`/`ROOM_NOT_FOUND` (404), `BOOKING_TIME_CONFLICT`/`ROOM_NAME_CONFLICT` (409), `USER_NOT_PROVISIONED` (409), `INVALID_PROFILE_TOKEN` (401) và `PROFILE_SYNC_UNAVAILABLE` (503).
+`error.details` là danh sách thông báo validation; các lỗi khác dùng danh sách rỗng. Lỗi HTTP dùng code `HTTP_<status>`; lỗi không xác định dùng `INTERNAL_SERVER_ERROR`. Các lỗi nghiệp vụ hiện có gồm `INVALID_BOOKING_TIME`/`INVALID_BOOKING_INPUT`/`INVALID_ROOM_INPUT` (400), `BOOKING_OWNER_REQUIRED` (403), `BOOKING_NOT_FOUND` (404), `ROOM_UNAVAILABLE`/`ROOM_NOT_FOUND` (404), `BOOKING_TIME_CONFLICT`/`ROOM_NAME_CONFLICT` (409), `USER_NOT_PROVISIONED` (409), `INVALID_PROFILE_TOKEN` (401) và `PROFILE_SYNC_UNAVAILABLE` (503).
 
 ```json
 {

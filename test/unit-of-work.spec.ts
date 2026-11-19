@@ -36,8 +36,17 @@ describe('UOW and database boundaries', () => {
       [],
       Object.assign(new Error(), { code: '23503' }),
     );
+    const otherExclusion = new QueryFailedError(
+      'INSERT',
+      [],
+      Object.assign(new Error(), { code: '23P01', constraint: 'unrelated_exclusion' }),
+    );
     const source = {
-      transaction: jest.fn().mockRejectedValueOnce(conflict).mockRejectedValueOnce(unrelated),
+      transaction: jest
+        .fn()
+        .mockRejectedValueOnce(conflict)
+        .mockRejectedValueOnce(unrelated)
+        .mockRejectedValueOnce(otherExclusion),
     };
     const uow = new TypeormBookingUnitOfWork(
       source as unknown as DataSource,
@@ -45,6 +54,7 @@ describe('UOW and database boundaries', () => {
     );
     await expect(uow.run(async () => undefined)).rejects.toBeInstanceOf(BookingTimeConflictError);
     await expect(uow.run(async () => undefined)).rejects.toBe(unrelated);
+    await expect(uow.run(async () => undefined)).rejects.toBe(otherExclusion);
   });
   it('closes an initialized DataSource and skips an already closed pool', async () => {
     const source = {
