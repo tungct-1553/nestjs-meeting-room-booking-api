@@ -12,7 +12,8 @@ const uow: RoomsUnitOfWork = {
   run: (work) => work({ rooms: { lockById, setActive, updateDetails } }),
 };
 const creator = { create: jest.fn() };
-const service = new RoomsService(uow, creator);
+const reader = { listActive: jest.fn(), findActiveById: jest.fn() };
+const service = new RoomsService(uow, creator, reader);
 
 describe('Rooms create use case', () => {
   beforeEach(() => jest.resetAllMocks());
@@ -173,5 +174,71 @@ describe('Rooms deactivate use case', () => {
     lockById.mockResolvedValue({ id: 'room-id', isActive: true });
     setActive.mockRejectedValue(unavailable);
     await expect(service.deactivate('room-id')).rejects.toBe(unavailable);
+  });
+});
+
+describe('Rooms read use cases', () => {
+  beforeEach(() => jest.resetAllMocks());
+
+  it('normalizes list input and delegates active filtering through the read port', async () => {
+    const result = { items: [], page: 2, limit: 5, total: 8 };
+    reader.listActive.mockResolvedValue(result);
+    await expect(
+      service.list({ page: 2, limit: 5, capacity: 10, search: ' PHÒNG '.normalize('NFD') }),
+    ).resolves.toBe(result);
+    expect(reader.listActive).toHaveBeenCalledWith({
+      page: 2,
+      limit: 5,
+      capacity: 10,
+      search: 'PHÒNG',
+    });
+    expect(lockById).not.toHaveBeenCalled();
+  });
+
+  it('treats an empty normalized search as no filter', async () => {
+    await service.list({ page: 1, limit: 20, search: ' \u00a0 ' });
+    expect(reader.listActive).toHaveBeenCalledWith({
+      page: 1,
+      limit: 20,
+      capacity: undefined,
+      search: undefined,
+    });
+  });
+
+  it.each([
+    { page: 0, limit: 20 },
+    { page: 1.5, limit: 20 },
+    { page: NaN, limit: 20 },
+    { page: 1, limit: 0 },
+    { page: 1, limit: 101 },
+    { page: 1, limit: 1.5 },
+    { page: Number.MAX_SAFE_INTEGER + 1, limit: 1 },
+    { page: Number.MAX_SAFE_INTEGER, limit: 100 },
+    { page: 1, limit: 20, capacity: 0 },
+    { page: 1, limit: 20, capacity: 1.5 },
+    { page: 1, limit: 20, capacity: 2147483648 },
+    { page: 1, limit: 20, search: '\0' },
+    { page: 1, limit: 20, search: 'A'.repeat(201) },
+  ])('rejects invalid list input %j before persistence', (input) => {
+    expect(() => service.list(input)).toThrow(InvalidRoomInputError);
+    expect(reader.listActive).not.toHaveBeenCalled();
+  });
+
+  it('returns an active detail and makes the null lookup decision in application', async () => {
+    const result = { id: 'room-id', name: 'A', capacity: 1, description: null, isActive: true };
+    reader.findActiveById.mockResolvedValue(result);
+    await expect(service.detail('room-id')).resolves.toBe(result);
+    expect(reader.findActiveById).toHaveBeenCalledWith('room-id');
+    reader.findActiveById.mockResolvedValue(null);
+    await expect(service.detail('missing')).rejects.toBeInstanceOf(RoomNotFoundError);
+    expect(lockById).not.toHaveBeenCalled();
+  });
+
+  it('propagates persistence failures rather than replacing them with empty results', async () => {
+    const error = new Error('read unavailable');
+    reader.listActive.mockRejectedValue(error);
+    reader.findActiveById.mockRejectedValue(error);
+    await expect(service.list({ page: 1, limit: 20 })).rejects.toBe(error);
+    await expect(service.detail('room-id')).rejects.toBe(error);
   });
 });

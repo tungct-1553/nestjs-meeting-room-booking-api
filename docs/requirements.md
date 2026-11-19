@@ -53,12 +53,14 @@ Response JSON, field ngày giờ serialize ISO 8601 UTC. Quy ước envelope:
 
 ### Phân trang và bộ lọc
 
-`page` là số nguyên từ 1, mặc định 1. `limit` là số nguyên từ 1 đến 100, mặc định 20. `meta` gồm trang hiện tại, giới hạn và tổng số bản ghi sau filter.
+`page` là số nguyên an toàn từ 1, mặc định 1; offset `(page - 1) * limit` phải là số nguyên an toàn. `limit` là số nguyên từ 1 đến 100, mặc định 20. `meta` gồm trang hiện tại, giới hạn và tổng số bản ghi sau filter.
 
 | Danh sách | Filter ngoài `page`/`limit` | Thứ tự |
 |---|---|---|
-| Phòng | `capacity`: sức chứa tối thiểu; `search`: tìm theo tên | `name ASC, id ASC` |
+| Phòng | `capacity`: số nguyên 1–2147483647, sức chứa tối thiểu; `search`: tìm chuỗi con theo tên | `name ASC, id ASC` |
 | Booking cá nhân | `status`: `confirmed` hoặc `cancelled` | `created_at DESC, id DESC` |
+
+Search phòng được trim/NFC trước validation, tối đa 200 Unicode code point và không chứa NUL. Chuỗi rỗng bỏ filter. Tìm không phân biệt hoa/thường theo Unicode simple-case mapping `pg_c_utf8`, phân biệt dấu; `%`, `_` và `\` là ký tự literal. List phòng và total dùng cùng database snapshot.
 
 Áp dụng filter và thứ tự trước offset/limit. Client không điều khiển owner filter của danh sách booking.
 

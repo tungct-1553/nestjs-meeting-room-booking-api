@@ -1,5 +1,6 @@
 import {
   Body,
+  Delete,
   Controller,
   HttpCode,
   HttpStatus,
@@ -15,6 +16,7 @@ import {
   ApiConflictResponse,
   ApiForbiddenResponse,
   ApiNotFoundResponse,
+  ApiNoContentResponse,
   ApiOAuth2,
   ApiParam,
   ApiTags,
@@ -33,13 +35,13 @@ import { UpdateRoomRequestDto } from './update-room-request.dto';
 @ApiUnauthorizedResponse({ description: 'Missing or invalid access token' })
 @ApiForbiddenResponse({ description: 'Admin role is required' })
 @ApiBadRequestResponse({ description: 'Invalid room input' })
-@ApiConflictResponse({ description: 'Room name is already in use' })
 @Roles('admin')
 @Controller('admin/rooms')
 export class AdminRoomsController {
   constructor(private readonly rooms: RoomsService) {}
 
   @Post()
+  @ApiConflictResponse({ description: 'Room name is already in use' })
   @HttpCode(HttpStatus.CREATED)
   @ApiDataResponse(AdminRoomResponseDto, HttpStatus.CREATED)
   async create(@Body() dto: CreateRoomRequestDto): Promise<AdminRoomResponseDto> {
@@ -51,7 +53,17 @@ export class AdminRoomsController {
     return AdminRoomResponseDto.from(room);
   }
 
+  @Delete(':id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiParam({ name: 'id', schema: { type: 'string', format: 'uuid' } })
+  @ApiNoContentResponse({ description: 'Room deactivated; existing bookings are preserved' })
+  @ApiNotFoundResponse({ description: 'Room was not found' })
+  async deactivate(@Param('id', new ParseUUIDPipe()) id: string): Promise<void> {
+    await this.rooms.deactivate(id);
+  }
+
   @Patch(':id')
+  @ApiConflictResponse({ description: 'Room name is already in use' })
   @ApiParam({ name: 'id', schema: { type: 'string', format: 'uuid' } })
   @ApiBody({
     type: UpdateRoomRequestDto,

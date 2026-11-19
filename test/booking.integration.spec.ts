@@ -1,3 +1,4 @@
+import { TypeormRoomReadRepository } from '../src/rooms/infrastructure/typeorm-room-read.repository';
 import type { RoomsTransaction } from '../src/rooms/application/ports/rooms-unit-of-work.port';
 import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
@@ -209,6 +210,7 @@ it('preserves an existing booking when deactivate waits for its transaction', as
   const deactivate = new RoomsService(
     new TypeormRoomsUnitOfWork(source),
     new TypeormRoomCreationRepository(source),
+    new TypeormRoomReadRepository(source),
   ).deactivate(roomId);
   try {
     await waitForBlockedTransaction();
@@ -274,6 +276,7 @@ it('keeps deactivate idempotent and reports missing rooms from application', asy
   const rooms = new RoomsService(
     new TypeormRoomsUnitOfWork(source),
     new TypeormRoomCreationRepository(source),
+    new TypeormRoomReadRepository(source),
   );
   await expect(rooms.deactivate(randomUUID())).rejects.toThrow('Room was not found');
   await rooms.deactivate(roomId);

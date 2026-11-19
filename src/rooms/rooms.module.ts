@@ -1,3 +1,6 @@
+import { ROOM_READ_REPOSITORY } from './application/ports/room-read-repository.port';
+import { TypeormRoomReadRepository } from './infrastructure/typeorm-room-read.repository';
+import { ClientRoomsController } from './presentation/client/rooms.controller';
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '../database/database.module';
 import { RoomsService } from './application/rooms.service';
@@ -9,10 +12,11 @@ import { TypeormRoomCreationRepository } from './infrastructure/typeorm-room-cre
 import { AdminRoomsController } from './presentation/admin/rooms.controller';
 
 @Module({
-  controllers: [AdminRoomsController],
+  controllers: [AdminRoomsController, ClientRoomsController],
   imports: [DatabaseModule],
   providers: [
     RoomsService,
+    { provide: ROOM_READ_REPOSITORY, useClass: TypeormRoomReadRepository },
     RoomsTransactionFactory,
     { provide: ROOMS_UNIT_OF_WORK, useClass: TypeormRoomsUnitOfWork },
     { provide: ROOM_CREATION_REPOSITORY, useClass: TypeormRoomCreationRepository },

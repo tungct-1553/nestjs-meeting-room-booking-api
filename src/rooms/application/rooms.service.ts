@@ -1,4 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
+import type { ListRoomsInput } from './inputs/list-rooms.input';
+import type { RoomPage } from './models/room-page';
+import { ROOM_READ_REPOSITORY } from './ports/room-read-repository.port';
+import type { RoomReadRepositoryPort } from './ports/room-read-repository.port';
+import { normalizeRoomList } from './policies/room-list.policy';
 import { RoomNotFoundError } from './errors/room.errors';
 import { ROOMS_UNIT_OF_WORK } from './ports/rooms-unit-of-work.port';
 import type { RoomsUnitOfWork } from './ports/rooms-unit-of-work.port';
@@ -14,7 +19,20 @@ export class RoomsService {
   constructor(
     @Inject(ROOMS_UNIT_OF_WORK) private readonly uow: RoomsUnitOfWork,
     @Inject(ROOM_CREATION_REPOSITORY) private readonly creator: RoomCreationRepositoryPort,
+    @Inject(ROOM_READ_REPOSITORY) private readonly reader: RoomReadRepositoryPort,
   ) {}
+
+  list(input: ListRoomsInput): Promise<RoomPage> {
+    return this.reader.listActive(normalizeRoomList(input));
+  }
+
+  async detail(roomId: string): Promise<Room> {
+    const room = await this.reader.findActiveById(roomId);
+    if (room === null) {
+      throw new RoomNotFoundError();
+    }
+    return room;
+  }
 
   create(input: CreateRoomInput): Promise<Room> {
     return this.creator.create(normalizeCreateRoom(input));
