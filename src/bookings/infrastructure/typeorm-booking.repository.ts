@@ -5,19 +5,7 @@ import type {
 } from '../application/ports/booking-repository.port';
 import type { Booking, BookingStatus } from '../application/models/booking';
 import { BookingEntity } from './booking.entity';
-
-function toBooking(row: BookingEntity): Booking {
-  return {
-    id: row.id,
-    roomId: row.roomId,
-    userId: row.userId,
-    title: row.title,
-    startAt: row.startAt,
-    endAt: row.endAt,
-    status: row.status,
-    createdAt: row.createdAt,
-  };
-}
+import { toBooking } from './booking.mapper';
 
 export class TypeormBookingRepository implements BookingRepositoryPort {
   constructor(private readonly manager: EntityManager) {}

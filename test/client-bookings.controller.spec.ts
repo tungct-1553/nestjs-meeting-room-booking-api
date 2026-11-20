@@ -28,7 +28,7 @@ const response = {
 
 describe('ClientBookingsController', () => {
   let controller: ClientBookingsController;
-  const bookings = { create: jest.fn(), cancel: jest.fn() };
+  const bookings = { create: jest.fn(), cancel: jest.fn(), list: jest.fn(), detail: jest.fn() };
 
   beforeEach(async () => {
     jest.resetAllMocks();
@@ -55,6 +55,37 @@ describe('ClientBookingsController', () => {
       startAt: booking.startAt,
       endAt: booking.endAt,
     });
+  });
+
+  it('maps list identity/query and converts only public fields to a paginated response', async () => {
+    bookings.list.mockResolvedValue({
+      items: [{ ...booking, privateField: 'hidden' }],
+      page: 2,
+      limit: 5,
+      total: 8,
+    });
+    expect(await controller.list(principal, { page: 2, limit: 5, status: 'confirmed' })).toEqual({
+      data: [response],
+      meta: { page: 2, limit: 5, total: 8 },
+    });
+    expect(bookings.list).toHaveBeenCalledWith({
+      actorSub: principal.sub,
+      page: 2,
+      limit: 5,
+      status: 'confirmed',
+    });
+  });
+
+  it('maps detail identity and response without replacing application ownership errors', async () => {
+    bookings.detail.mockResolvedValueOnce({ ...booking, privateField: 'hidden' });
+    expect(await controller.detail(principal, booking.id)).toEqual(response);
+    expect(bookings.detail).toHaveBeenCalledWith({
+      actorSub: principal.sub,
+      bookingId: booking.id,
+    });
+    const error = new BookingOwnerRequiredError();
+    bookings.detail.mockRejectedValueOnce(error);
+    await expect(controller.detail(principal, booking.id)).rejects.toBe(error);
   });
 
   it('maps cancel route and verified identity, preserving response whitelist', async () => {

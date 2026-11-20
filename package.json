@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "test": "jest --runInBand",
     "test:integration": "jest --config jest.integration.config.cjs --runInBand",
+    "test:e2e": "jest --config jest.e2e.config.cjs --runInBand",
     "migration:run": "typeorm-ts-node-commonjs migration:run -d src/database/data-source.ts",
     "migration:revert": "typeorm-ts-node-commonjs migration:revert -d src/database/data-source.ts",
     "lint": "eslint src test scripts *.mjs *.cjs",
