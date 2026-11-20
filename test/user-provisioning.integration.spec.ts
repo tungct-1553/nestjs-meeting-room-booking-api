@@ -11,6 +11,7 @@ import { TypeormUserRepository } from '../src/users/infrastructure/typeorm-user.
 import { UsersService } from '../src/users/application/users.service';
 import { BookingsService } from '../src/bookings/application/bookings.service';
 import { TypeormBookingUnitOfWork } from '../src/bookings/infrastructure/typeorm-booking-unit-of-work';
+import { TypeormBookingReadRepository } from '../src/bookings/infrastructure/typeorm-booking-read.repository';
 import { RoomsTransactionFactory } from '../src/rooms/infrastructure/public/rooms-transaction.factory';
 import { UserNotProvisionedError } from '../src/users/application/errors/user.errors';
 import { createIdentityFixture } from './helpers/identity-fixture';
@@ -95,6 +96,7 @@ it('does not provision identities through either GET me or booking', async () =>
   const service = new BookingsService(
     new UsersService(users, users),
     new TypeormBookingUnitOfWork(source, new RoomsTransactionFactory()),
+    new TypeormBookingReadRepository(source),
   );
   await expect(
     service.create({

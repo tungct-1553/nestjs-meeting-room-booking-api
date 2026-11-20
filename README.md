@@ -56,9 +56,12 @@ npm run format:check
 npm test
 node scripts/test-bootstrap.mjs
 TEST_DATABASE_URL='<PostgreSQL test URL>' npm run test:integration
+TEST_DATABASE_URL='<PostgreSQL test URL>' npm run test:e2e
 ```
 
-Integration tests yêu cầu database test riêng với quyền tạo schema/extension. Test bootstrap tự tạo và xóa PostgreSQL container tạm.
+Integration và E2E yêu cầu PostgreSQL 17+ UTF-8, database test riêng với quyền tạo schema/extension. Test bootstrap tự tạo và xóa PostgreSQL container tạm.
+
+E2E chạy luồng đặt/hủy phòng qua HTTP với PostgreSQL thật, JWT ký bằng test key và JWKS local; không cần chạy Keycloak. Mỗi suite tạo schema riêng và xóa khi kết thúc. Xem [phạm vi E2E](docs/plans/booking-flow-e2e.md).
 
 `npm run test:architecture` kiểm tra riêng ranh giới layer và module. Dùng `npm run format` để định dạng code và `npm run lint:fix` để sửa các lỗi lint tự động.
 

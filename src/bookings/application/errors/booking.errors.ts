@@ -37,6 +37,12 @@ export class BookingNotFoundError extends ApplicationError {
 
 export class BookingOwnerRequiredError extends ApplicationError {
   constructor() {
-    super('BOOKING_OWNER_REQUIRED', 'forbidden', 'Only the booking owner can cancel it');
+    super('BOOKING_OWNER_REQUIRED', 'forbidden', 'Only the booking owner can access it');
+  }
+}
+
+export class InvalidBookingQueryError extends ApplicationError {
+  constructor() {
+    super('INVALID_BOOKING_QUERY', 'invalid_input', 'Invalid booking pagination or status filter');
   }
 }

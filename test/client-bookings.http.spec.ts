@@ -276,8 +276,11 @@ describe('Client Booking HTTP', () => {
     expect(
       Object.keys(client.paths).filter((path) => path.startsWith('/api/v1/client/bookings')),
     ).toEqual(['/api/v1/client/bookings', '/api/v1/client/bookings/{id}']);
-    expect(Object.keys(client.paths['/api/v1/client/bookings'])).toEqual(['post']);
-    expect(Object.keys(client.paths['/api/v1/client/bookings/{id}'])).toEqual(['delete']);
+    expect(Object.keys(client.paths['/api/v1/client/bookings']).sort()).toEqual(['get', 'post']);
+    expect(Object.keys(client.paths['/api/v1/client/bookings/{id}']).sort()).toEqual([
+      'delete',
+      'get',
+    ]);
     const post = client.paths['/api/v1/client/bookings'].post;
     const del = client.paths['/api/v1/client/bookings/{id}'].delete;
     expect(post.responses['201'].content['application/json'].schema.properties.data.$ref).toContain(
