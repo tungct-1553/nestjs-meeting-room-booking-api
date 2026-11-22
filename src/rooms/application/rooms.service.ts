@@ -1,4 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
+import type { TimeRange } from '../../common/validation/time-range';
 import type { ListRoomsInput } from './inputs/list-rooms.input';
 import type { RoomPage } from './models/room-page';
 import { ROOM_READ_REPOSITORY } from './ports/room-read-repository.port';
@@ -13,6 +14,10 @@ import type { CreateRoomInput } from './inputs/create-room.input';
 import type { Room } from './models/room';
 import { normalizeCreateRoom, normalizeRoomPatch } from './policies/room-details.policy';
 import type { UpdateRoomInput } from './inputs/update-room.input';
+import {
+  findAvailableIntervals,
+  validateAvailabilityRange,
+} from './policies/room-availability.policy';
 
 @Injectable()
 export class RoomsService {
@@ -24,6 +29,20 @@ export class RoomsService {
 
   list(input: ListRoomsInput): Promise<RoomPage> {
     return this.reader.listActive(normalizeRoomList(input));
+  }
+
+  listAvailable(input: ListRoomsInput, range: TimeRange): Promise<RoomPage> {
+    validateAvailabilityRange(range);
+    return this.reader.listActive(normalizeRoomList(input), range);
+  }
+
+  async availability(id: string, range: TimeRange): Promise<TimeRange[]> {
+    validateAvailabilityRange(range);
+    const busy = await this.reader.findActiveRoomBusyIntervals(id, range);
+    if (busy === null) {
+      throw new RoomNotFoundError();
+    }
+    return findAvailableIntervals(range, busy);
   }
 
   async detail(roomId: string): Promise<Room> {

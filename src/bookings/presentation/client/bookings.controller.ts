@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -23,6 +24,7 @@ import {
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { ApiDataResponse } from '../../../common/http/decorators/api-data-response.decorator';
+import { TimeRangeRequestDto } from '../../../common/http/dto/time-range-request.dto';
 import { CurrentPrincipal } from '../../../identity/public/http/current-principal.decorator';
 import { Roles } from '../../../identity/public/http/roles.decorator';
 import type { Principal } from '../../../identity/public/principal';
@@ -92,6 +94,27 @@ export class ClientBookingsController {
       actorSub: principal.sub,
       roomId: dto.roomId,
       title: dto.title,
+      startAt: new Date(dto.startAt),
+      endAt: new Date(dto.endAt),
+    });
+    return ClientBookingResponseDto.from(booking);
+  }
+
+  @Patch(':id/schedule')
+  @ApiParam({ name: 'id', schema: { type: 'string', format: 'uuid' } })
+  @ApiNotFoundResponse({ description: 'Booking was not found or room is unavailable' })
+  @ApiConflictResponse({
+    description: 'Profile is not provisioned, booking cannot be rescheduled, or time overlaps',
+  })
+  @ApiDataResponse(ClientBookingResponseDto)
+  async reschedule(
+    @CurrentPrincipal() principal: Principal,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: TimeRangeRequestDto,
+  ): Promise<ClientBookingResponseDto> {
+    const booking = await this.bookings.reschedule({
+      actorSub: principal.sub,
+      bookingId: id,
       startAt: new Date(dto.startAt),
       endAt: new Date(dto.endAt),
     });

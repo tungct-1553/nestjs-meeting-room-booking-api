@@ -24,12 +24,16 @@ describe('BookingsService', () => {
   const insert = jest.fn().mockImplementation(async (value) => value);
   const lockForBooking = jest.fn();
   const lockById = jest.fn();
+  const updateSchedule = jest.fn();
   const updateStatus = jest.fn();
   const users = { requireBySub: jest.fn().mockResolvedValue({ id: 'local-user' }) };
   const reader = { listByUser: jest.fn(), findById: jest.fn() };
   const uow: BookingUnitOfWork = {
     run: (work) =>
-      work({ rooms: { lockForBooking }, bookings: { insert, lockById, updateStatus } }),
+      work({
+        rooms: { lockForBooking },
+        bookings: { insert, lockById, updateStatus, updateSchedule },
+      }),
   };
   const service = new BookingsService(users, uow, reader);
   beforeEach(() => {

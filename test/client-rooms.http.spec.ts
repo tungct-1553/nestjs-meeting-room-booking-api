@@ -180,9 +180,16 @@ it('publishes correct query, response, security and namespace Swagger', async ()
   ).body;
   expect(
     Object.keys(client.paths).filter((path) => path.startsWith('/api/v1/client/rooms')),
-  ).toEqual(['/api/v1/client/rooms', '/api/v1/client/rooms/{id}']);
+  ).toEqual([
+    '/api/v1/client/rooms',
+    '/api/v1/client/rooms/available',
+    '/api/v1/client/rooms/{id}',
+    '/api/v1/client/rooms/{id}/availability',
+  ]);
   expect(Object.keys(client.paths['/api/v1/client/rooms'])).toEqual(['get']);
+  expect(Object.keys(client.paths['/api/v1/client/rooms/available'])).toEqual(['get']);
   expect(Object.keys(client.paths['/api/v1/client/rooms/{id}'])).toEqual(['get']);
+  expect(Object.keys(client.paths['/api/v1/client/rooms/{id}/availability'])).toEqual(['get']);
   const route = client.paths['/api/v1/client/rooms'].get;
   expect(route.responses['200'].content['application/json'].schema.$ref).toContain(
     'RoomPageResponseDto',

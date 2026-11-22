@@ -41,6 +41,16 @@ export class BookingOwnerRequiredError extends ApplicationError {
   }
 }
 
+export class BookingNotReschedulableError extends ApplicationError {
+  constructor() {
+    super(
+      'BOOKING_NOT_RESCHEDULABLE',
+      'conflict',
+      'Only confirmed bookings that have not started can be rescheduled',
+    );
+  }
+}
+
 export class InvalidBookingQueryError extends ApplicationError {
   constructor() {
     super('INVALID_BOOKING_QUERY', 'invalid_input', 'Invalid booking pagination or status filter');

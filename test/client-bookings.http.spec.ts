@@ -45,7 +45,12 @@ describe('Client Booking HTTP', () => {
   let adminToken: string;
   const users = { requireBySub: jest.fn() };
   const rooms = { lockForBooking: jest.fn() };
-  const bookings = { insert: jest.fn(), lockById: jest.fn(), updateStatus: jest.fn() };
+  const bookings = {
+    insert: jest.fn(),
+    lockById: jest.fn(),
+    updateStatus: jest.fn(),
+    updateSchedule: jest.fn(),
+  };
   const uow: BookingUnitOfWork = { run: (work) => work({ rooms, bookings }) };
 
   beforeAll(async () => {
@@ -275,7 +280,12 @@ describe('Client Booking HTTP', () => {
     ).body;
     expect(
       Object.keys(client.paths).filter((path) => path.startsWith('/api/v1/client/bookings')),
-    ).toEqual(['/api/v1/client/bookings', '/api/v1/client/bookings/{id}']);
+    ).toEqual([
+      '/api/v1/client/bookings',
+      '/api/v1/client/bookings/{id}',
+      '/api/v1/client/bookings/{id}/schedule',
+    ]);
+    expect(Object.keys(client.paths['/api/v1/client/bookings/{id}/schedule'])).toEqual(['patch']);
     expect(Object.keys(client.paths['/api/v1/client/bookings']).sort()).toEqual(['get', 'post']);
     expect(Object.keys(client.paths['/api/v1/client/bookings/{id}']).sort()).toEqual([
       'delete',
@@ -296,11 +306,11 @@ describe('Client Booking HTTP', () => {
       expect.arrayContaining([expect.objectContaining({ bearer: [] })]),
     );
     expect(del.security).toEqual(expect.arrayContaining([expect.objectContaining({ bearer: [] })]));
-    expect(client.components.schemas.CreateBookingRequestDto.required).toEqual([
-      'roomId',
-      'title',
-      'startAt',
+    expect([...client.components.schemas.CreateBookingRequestDto.required].sort()).toEqual([
       'endAt',
+      'roomId',
+      'startAt',
+      'title',
     ]);
     expect(
       client.components.schemas.CreateBookingRequestDto.properties.title.maxLength,

@@ -12,7 +12,11 @@ const uow: RoomsUnitOfWork = {
   run: (work) => work({ rooms: { lockById, setActive, updateDetails } }),
 };
 const creator = { create: jest.fn() };
-const reader = { listActive: jest.fn(), findActiveById: jest.fn() };
+const reader = {
+  listActive: jest.fn(),
+  findActiveById: jest.fn(),
+  findActiveRoomBusyIntervals: jest.fn(),
+};
 const service = new RoomsService(uow, creator, reader);
 
 describe('Rooms create use case', () => {
