@@ -19,9 +19,11 @@ export class TypeormRoomRepository implements RoomTransactionRepositoryPort {
     return room ? { id: room.id, isActive: room.isActive } : null;
   }
 
-  async setActive(id: string, isActive: boolean): Promise<void> {
+  async setActive(id: string, isActive: boolean): Promise<Room> {
     this.assertActive();
-    await this.manager.getRepository(RoomEntity).update(id, { isActive });
+    const repository = this.manager.getRepository(RoomEntity);
+    await repository.update({ id, isActive: !isActive }, { isActive });
+    return toRoom(await repository.findOneByOrFail({ id }));
   }
 
   async updateDetails(id: string, patch: RoomDetailsPatch): Promise<Room> {

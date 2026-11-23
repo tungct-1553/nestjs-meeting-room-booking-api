@@ -7,6 +7,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
 import { ROOM_CREATION_REPOSITORY } from '../src/rooms/application/ports/room-creation-repository.port';
+import { ROOM_READ_REPOSITORY } from '../src/rooms/application/ports/room-read-repository.port';
 import { ROOMS_UNIT_OF_WORK } from '../src/rooms/application/ports/rooms-unit-of-work.port';
 import type { RoomsUnitOfWork } from '../src/rooms/application/ports/rooms-unit-of-work.port';
 import { RoomNameConflictError } from '../src/rooms/application/errors/room.errors';
@@ -18,6 +19,7 @@ describe('Admin rooms HTTP', () => {
   let adminToken: string;
   const room = { id: randomUUID(), name: 'A', capacity: 10, description: null, isActive: true };
   const creator = { create: jest.fn() };
+  const reader = { listForAdmin: jest.fn(), findById: jest.fn() };
   const transaction = { lockById: jest.fn(), setActive: jest.fn(), updateDetails: jest.fn() };
   const uow: RoomsUnitOfWork = { run: (work) => work({ rooms: transaction }) };
 
@@ -31,6 +33,8 @@ describe('Admin rooms HTTP', () => {
       .useValue(fixture.config)
       .overrideProvider(ROOM_CREATION_REPOSITORY)
       .useValue(creator)
+      .overrideProvider(ROOM_READ_REPOSITORY)
+      .useValue(reader)
       .overrideProvider(ROOMS_UNIT_OF_WORK)
       .useValue(uow)
       .compile();
@@ -42,7 +46,15 @@ describe('Admin rooms HTTP', () => {
   beforeEach(() => {
     jest.resetAllMocks();
     creator.create.mockResolvedValue(room);
+    reader.listForAdmin.mockImplementation(async (input, isActive) => ({
+      items: [{ ...room, isActive: isActive ?? true, internal: 'hidden' }],
+      page: input.page,
+      limit: input.limit,
+      total: 1,
+    }));
+    reader.findById.mockResolvedValue({ ...room, internal: 'hidden' });
     transaction.lockById.mockResolvedValue({ id: room.id, isActive: true });
+    transaction.setActive.mockImplementation(async (_id, isActive) => ({ ...room, isActive }));
     transaction.updateDetails.mockImplementation(async (_id, patch) => ({ ...room, ...patch }));
   });
   afterAll(async () => {
@@ -61,6 +73,126 @@ describe('Admin rooms HTTP', () => {
     }
     return call.send(body as object);
   };
+
+  const list = (query = '', token: string | null = adminToken) => {
+    const call = request(app.getHttpServer()).get(`/api/v1/admin/rooms${query}`);
+    return token ? call.set('Authorization', `Bearer ${token}`) : call;
+  };
+
+  const detail = (id: string = room.id, token: string | null = adminToken) => {
+    const call = request(app.getHttpServer()).get(`/api/v1/admin/rooms/${id}`);
+    return token ? call.set('Authorization', `Bearer ${token}`) : call;
+  };
+
+  const setStatus = (body: unknown, id: string = room.id, token: string | null = adminToken) => {
+    const call = request(app.getHttpServer()).patch(`/api/v1/admin/rooms/${id}/status`);
+    if (token) {
+      call.set('Authorization', `Bearer ${token}`);
+    }
+    return call.set('Content-Type', 'application/json').send(JSON.stringify(body));
+  };
+
+  it('requires Admin for room list, detail and status', async () => {
+    for (const [token, status] of [
+      [null, 401],
+      [fixture.token(), 403],
+    ] as const) {
+      await list('', token).expect(status);
+      await detail(room.id, token).expect(status);
+      await setStatus({ isActive: false }, room.id, token).expect(status);
+    }
+    expect(reader.listForAdmin).not.toHaveBeenCalled();
+    expect(reader.findById).not.toHaveBeenCalled();
+    expect(transaction.lockById).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['', undefined],
+    ['?isActive=true', true],
+    ['?isActive=false', false],
+  ] as const)('maps Admin list filter %s with a single page envelope', async (query, isActive) => {
+    const response = await list(query).expect(200);
+    expect(reader.listForAdmin).toHaveBeenCalledWith(
+      { page: 1, limit: 20, capacity: undefined, search: undefined },
+      isActive,
+    );
+    expect(response.body).toEqual({
+      data: [{ ...room, isActive: isActive ?? true }],
+      meta: { page: 1, limit: 20, total: 1 },
+    });
+  });
+
+  it('keeps room search, capacity and pagination with the Admin status filter', async () => {
+    await list(
+      `?page=2&limit=5&capacity=8&search=${encodeURIComponent(' PHÒNG '.normalize('NFD'))}&isActive=false`,
+    ).expect(200);
+    expect(reader.listForAdmin).toHaveBeenCalledWith(
+      { page: 2, limit: 5, capacity: 8, search: 'PHÒNG' },
+      false,
+    );
+  });
+
+  it.each([
+    'isActive=',
+    'isActive=TRUE',
+    'isActive=%20false',
+    'isActive=1',
+    'isActive=false&isActive=true',
+    'isActive%5B%5D=false',
+    'isActive%5Bkey%5D=false',
+    'limit=101',
+  ])('rejects invalid Admin list query %s before persistence', async (query) => {
+    await list(`?${query}`).expect(400);
+    expect(reader.listForAdmin).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('returns Admin detail for isActive=%s', async (isActive) => {
+    reader.findById.mockResolvedValueOnce({ ...room, isActive, internal: 'hidden' });
+    expect((await detail().expect(200)).body).toEqual({ data: { ...room, isActive } });
+    expect(reader.findById).toHaveBeenCalledWith(room.id);
+  });
+
+  it('validates UUID and returns ROOM_NOT_FOUND for missing Admin room detail', async () => {
+    await detail('not-a-uuid').expect(400);
+    expect(reader.findById).not.toHaveBeenCalled();
+    reader.findById.mockResolvedValueOnce(null);
+    const response = await detail().expect(404);
+    expect(response.body.error.code).toBe('ROOM_NOT_FOUND');
+  });
+
+  it.each([true, false])('sets isActive=%s and returns the updated room', async (isActive) => {
+    expect((await setStatus({ isActive }).expect(200)).body).toEqual({
+      data: { ...room, isActive },
+    });
+    expect(transaction.lockById).toHaveBeenCalledWith(room.id);
+    expect(transaction.setActive).toHaveBeenCalledWith(room.id, isActive);
+  });
+
+  it('validates UUID and returns ROOM_NOT_FOUND for missing room status update', async () => {
+    await setStatus({ isActive: true }, 'not-a-uuid').expect(400);
+    expect(transaction.lockById).not.toHaveBeenCalled();
+    transaction.lockById.mockResolvedValueOnce(null);
+    const response = await setStatus({ isActive: true }).expect(404);
+    expect(response.body.error.code).toBe('ROOM_NOT_FOUND');
+    expect(transaction.setActive).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {},
+    { isActive: null },
+    { isActive: 'false' },
+    { isActive: 1 },
+    { isActive: [true] },
+    { isActive: false, name: 'B' },
+    [],
+    [{ isActive: true }],
+    null,
+    true,
+  ])('rejects invalid status body %j before persistence', async (body) => {
+    await setStatus(body).expect(400);
+    expect(transaction.lockById).not.toHaveBeenCalled();
+    expect(transaction.setActive).not.toHaveBeenCalled();
+  });
 
   it('requires an authenticated Admin before invoking the use case', async () => {
     await create({ name: 'A', capacity: 10 }, null).expect(401);
@@ -190,7 +322,7 @@ describe('Admin rooms HTTP', () => {
     },
   );
 
-  it('publishes 201 create and 200 patch only in Admin Swagger', async () => {
+  it('publishes room lifecycle operations only in Admin Swagger', async () => {
     const admin = await request(app.getHttpServer())
       .get('/api/v1/docs/admin/openapi.json')
       .expect(200);
@@ -213,11 +345,28 @@ describe('Admin rooms HTTP', () => {
       expect(schema.properties.name.description).toContain('1..200');
     }
     expect(admin.body.components.schemas.UpdateRoomRequestDto.required).toBeUndefined();
+    const list = admin.body.paths['/api/v1/admin/rooms'].get;
+    expect(list.responses['200'].content['application/json'].schema.$ref).toContain(
+      'AdminRoomPageResponseDto',
+    );
+    expect(list.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'isActive', required: false, schema: { type: 'boolean' } }),
+      ]),
+    );
+    expect(admin.body.paths['/api/v1/admin/rooms/{id}'].get.responses['404']).toBeDefined();
+    const status = admin.body.paths['/api/v1/admin/rooms/{id}/status'].patch;
+    expect(status.responses['200']).toBeDefined();
+    expect(status.responses['404']).toBeDefined();
+    const statusSchema = admin.body.components.schemas.UpdateRoomStatusRequestDto;
+    expect(statusSchema.required).toEqual(['isActive']);
+    expect(statusSchema.properties.isActive.type).toBe('boolean');
     const client = await request(app.getHttpServer())
       .get('/api/v1/docs/client/openapi.json')
       .expect(200);
     expect(client.body.paths['/api/v1/admin/rooms']).toBeUndefined();
     expect(client.body.paths['/api/v1/admin/rooms/{id}']).toBeUndefined();
+    expect(client.body.paths['/api/v1/admin/rooms/{id}/status']).toBeUndefined();
   });
 
   it.each([[], [1], null, 1, false, 'text'])(

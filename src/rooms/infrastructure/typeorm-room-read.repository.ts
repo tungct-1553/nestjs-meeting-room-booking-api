@@ -20,12 +20,24 @@ export class TypeormRoomReadRepository implements RoomReadRepositoryPort {
   constructor(@Inject(DataSource) private readonly source: DataSource) {}
 
   listActive(input: ListRoomsInput, availableDuring?: TimeRange): Promise<RoomPage> {
+    return this.listRooms(input, true, availableDuring);
+  }
+
+  listForAdmin(input: ListRoomsInput, isActive?: boolean): Promise<RoomPage> {
+    return this.listRooms(input, isActive);
+  }
+
+  private listRooms(
+    input: ListRoomsInput,
+    isActive?: boolean,
+    availableDuring?: TimeRange,
+  ): Promise<RoomPage> {
     // Two SELECTs need one snapshot so concurrent writes cannot disagree with total.
     return this.source.transaction('REPEATABLE READ', async (manager) => {
-      const query = manager
-        .getRepository(RoomEntity)
-        .createQueryBuilder('room')
-        .where('room.isActive = :active', { active: true });
+      const query = manager.getRepository(RoomEntity).createQueryBuilder('room');
+      if (isActive !== undefined) {
+        query.andWhere('room.isActive = :active', { active: isActive });
+      }
       if (input.capacity !== undefined) {
         query.andWhere('room.capacity >= :capacity', { capacity: input.capacity });
       }
@@ -59,6 +71,11 @@ export class TypeormRoomReadRepository implements RoomReadRepositoryPort {
 
   async findActiveById(id: string): Promise<Room | null> {
     const row = await this.source.getRepository(RoomEntity).findOneBy({ id, isActive: true });
+    return row === null ? null : toRoom(row);
+  }
+
+  async findById(id: string): Promise<Room | null> {
+    const row = await this.source.getRepository(RoomEntity).findOneBy({ id });
     return row === null ? null : toRoom(row);
   }
 
