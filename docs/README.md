@@ -11,6 +11,8 @@
 | [User provisioning](user-provisioning.md) | Client sync, đọc hồ sơ, retry và cấp hồ sơ Admin qua CLI |
 | [Admin Room create/update](plans/admin-room-create-update.md) | Contract, luồng triển khai và kiểm thử hai API ghi phòng |
 | [Booking create/cancel](plans/booking-create-cancel.md) | Contract, transaction và kiểm thử API đặt/hủy booking |
+| [Booking list/detail](plans/booking-read.md) | Owner policy, read port, phân trang và snapshot danh sách booking |
+| [Booking flow E2E](plans/booking-flow-e2e.md) | Kiểm thử HTTP và PostgreSQL cho luồng đặt/hủy phòng họp |
 | [Room list/detail/deactivate](plans/room-read-deactivate.md) | Contract, read port, phân trang và kiểm thử ngừng hoạt động phòng |
 | [ERD](database.drawio) | Entity và quan hệ dữ liệu |
 

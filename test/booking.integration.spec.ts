@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { DataSource } from 'typeorm';
 import { databaseOptions } from '../src/database/options';
 import { TypeormBookingUnitOfWork } from '../src/bookings/infrastructure/typeorm-booking-unit-of-work';
+import { TypeormBookingReadRepository } from '../src/bookings/infrastructure/typeorm-booking-read.repository';
 import { RoomsTransactionFactory } from '../src/rooms/infrastructure/public/rooms-transaction.factory';
 import { RoomsService } from '../src/rooms/application/rooms.service';
 import { TypeormRoomCreationRepository } from '../src/rooms/infrastructure/typeorm-room-creation.repository';
@@ -93,6 +94,7 @@ beforeAll(async () => {
   service = new BookingsService(
     new UsersService(new TypeormUserRepository(source), new TypeormUserRepository(source)),
     uow,
+    new TypeormBookingReadRepository(source),
   );
 });
 beforeEach(async () => {
