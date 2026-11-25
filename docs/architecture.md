@@ -17,7 +17,9 @@ Module được phân chia theo quyền sở hữu hành vi và dữ liệu. Mod
 | Database | Khởi tạo DataSource/pool, cấu hình persistence, lifecycle và migration | Provider `DataSource` |
 | Health | Liveness và database readiness | Controller health/readiness |
 
-`BookingsModule` phụ thuộc Users, Rooms và Database. Users/Rooms không phụ thuộc Bookings. Database không import feature service hoặc chứa unit of work nghiệp vụ.
+`BookingsModule` phụ thuộc Users, Rooms và Database. `RoomsModule` phụ thuộc Database. Database không import feature service hoặc chứa unit of work nghiệp vụ.
+
+Ở tầng persistence, hai truy vấn giờ trống của Rooms đọc trực tiếp `bookings.room_id`, `start_at`, `end_at` và `status` để phòng và lịch được đọc trong cùng snapshot PostgreSQL. Bookings sở hữu thao tác ghi và schema booking. Sửa các cột này hoặc quy tắc chiếm chỗ cần kiểm tra cả hai truy vấn giờ trống.
 
 ```mermaid
 flowchart LR

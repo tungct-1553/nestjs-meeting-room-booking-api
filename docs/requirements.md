@@ -11,9 +11,9 @@ Ngoài phạm vi: frontend, upload ảnh, email notification, approval workflow,
 | Health/readiness | Public |
 | `/client/*` | Employee hoặc Admin |
 | `/admin/*` | Admin |
-| Xem chi tiết/hủy booking | Có quyền Client API và là chủ booking |
+| Xem chi tiết/đổi lịch/hủy booking | Có quyền Client API và là chủ booking |
 
-Admin có quyền Employee nhưng không được xem/hủy booking của user khác. Namespace phân chia contract HTTP; quyền thao tác được kiểm tra bằng role và owner policy.
+Admin có quyền Employee nhưng không được xem, đổi lịch hoặc hủy booking của user khác. Namespace phân chia contract HTTP; quyền thao tác được kiểm tra bằng role và owner policy.
 
 Access token đã xác minh cung cấp Keycloak `sub`. Users đồng bộ hồ sơ theo `users.keycloak_sub = sub`, trả UUID `users.id`; UUID này được dùng làm `Booking.userId`. Client không gửi `userId` khi tạo booking. Email/display name là snapshot nullable, không dùng làm khóa định danh.
 
@@ -31,11 +31,12 @@ Access token đã xác minh cung cấp Keycloak `sub`. Users đồng bộ hồ s
 ### Booking
 
 - Title được trim hai đầu, dài 1–200 Unicode code point và không chứa NUL (`\u0000`).
-- Một booking thuộc một phòng và một user. `startAt`/`endAt` phải là ISO 8601 có timezone; `startAt < endAt` và chỉ tạo booking bắt đầu trong tương lai.
+- Một booking thuộc một phòng và một user. `startAt`/`endAt` phải là ISO 8601 có timezone. API cắt phần giây lẻ sau ba chữ số trước khi kiểm tra `startAt < endAt`, kiểm tra giờ bắt đầu và ghi lịch. Chỉ tạo booking bắt đầu trong tương lai.
 - Khoảng thời gian là `[startAt, endAt)`: booking kết thúc đúng lúc booking khác bắt đầu được phép.
 - Booking `confirmed` giữ phòng; booking `cancelled` không giữ phòng. Hai booking confirmed cùng phòng không được giao nhau, kể cả khi tạo đồng thời.
 - Danh sách chỉ trả booking của người gọi. Xem chi tiết và hủy yêu cầu owner; không phải owner trả 403, không tồn tại trả 404.
 - Hủy chuyển trạng thái sang `cancelled`; hủy lặp lại trả booking đã hủy mà không ghi lại. Cho phép hủy khi phòng inactive hoặc lịch đã bắt đầu/kết thúc; giữ toàn bộ lịch sử.
+- Chủ booking được đổi giờ trong cùng phòng khi booking còn `confirmed`, chưa bắt đầu và phòng còn active. Nếu khung giờ mới bị trùng, booking giữ khung giờ cũ.
 
 ## 3. Quy ước HTTP
 
@@ -85,12 +86,16 @@ Sync lấy `sub`, email/display name và `iat` từ token đã xác minh. Reques
 | Method | Path | Quyền | Input | Response |
 |---|---|---|---|---|
 | GET | `/client/rooms` | Employee/Admin | Query phân trang/filter phòng | 200 list `Room` active |
+| GET | `/client/rooms/available` | Employee/Admin | `startAt`, `endAt` và query phân trang/filter phòng | 200 list `Room` active trống suốt khoảng yêu cầu |
 | GET | `/client/rooms/:id` | Employee/Admin | UUID phòng | 200 `Room`; 404 nếu không tồn tại/inactive |
+| GET | `/client/rooms/:id/availability` | Employee/Admin | UUID phòng, query `startAt`, `endAt` | 200 `{ roomId, availableIntervals: [{ startAt, endAt }] }`; 404 nếu không tồn tại/inactive |
 | POST | `/admin/rooms` | Admin | `name`, `capacity`, `description?` | 201 `Room`; 400 nếu invalid; 409 nếu trùng tên |
 | PATCH | `/admin/rooms/:id` | Admin | `name?`, `capacity?`, `description?` | 200 `Room`; 400 nếu UUID/body invalid; 404 nếu không tồn tại; 409 nếu trùng tên |
 | DELETE | `/admin/rooms/:id` | Admin | UUID phòng | 204; 404 nếu không tồn tại |
 
 `DELETE` ngừng hoạt động phòng. Phòng đã inactive vẫn hoàn tất thao tác với 204.
+
+Hai endpoint tra cứu giờ trống nhận khoảng ISO 8601 có timezone. API cắt phần giây lẻ sau ba chữ số trước khi kiểm tra `now < startAt < endAt` và truy vấn. Chỉ booking `confirmed` chiếm chỗ trong khoảng `[startAt, endAt)`. `availableIntervals` sắp tăng dần theo giờ bắt đầu và nằm trong khoảng đã chuẩn hóa. Phòng trống hoàn toàn trả một khoảng, phòng kín lịch trả mảng rỗng.
 
 ### Booking
 
@@ -99,6 +104,7 @@ Sync lấy `sub`, email/display name và `iat` từ token đã xác minh. Reques
 | POST | `/client/bookings` | Employee/Admin | `roomId`, `title`, `startAt`, `endAt` | 201 `Booking`; 404 nếu phòng không khả dụng; 409 nếu trùng lịch |
 | GET | `/client/bookings` | Employee/Admin | Query phân trang/filter booking | 200 list `Booking` của người gọi |
 | GET | `/client/bookings/:id` | Chủ booking | UUID booking | 200 `Booking`; 403 nếu không phải owner; 404 nếu không tồn tại |
+| PATCH | `/client/bookings/:id/schedule` | Chủ booking | UUID booking, body `startAt`, `endAt` theo quy tắc thời gian booking | 200 `Booking`; 403 nếu không phải owner; 404 nếu thiếu booking hoặc phòng không khả dụng; 409 nếu đã hủy/đã bắt đầu (`BOOKING_NOT_RESCHEDULABLE`) hoặc trùng lịch (`BOOKING_TIME_CONFLICT`) |
 | DELETE | `/client/bookings/:id` | Chủ booking | UUID booking | 200 `Booking` cancelled; 403 nếu không phải owner; 404 nếu không tồn tại |
 
 ## 5. Response model
@@ -136,8 +142,8 @@ Ví dụ response của `GET /api/v1/client/users/me`:
 | 400 | DTO validation, body sync không hợp lệ hoặc khoảng thời gian booking không hợp lệ |
 | 401 | Thiếu access token hoặc token không hợp lệ |
 | 403 | Thiếu role hoặc không phải owner booking |
-| 404 | Resource không tồn tại; phòng không khả dụng khi tạo booking |
-| 409 | Booking trùng lịch, tên phòng trùng hoặc chưa có hồ sơ ứng dụng |
+| 404 | Resource không tồn tại; phòng không khả dụng khi tạo hoặc đổi lịch booking |
+| 409 | Booking trùng lịch hoặc không đủ điều kiện đổi lịch, tên phòng trùng hoặc chưa có hồ sơ ứng dụng |
 | 413 | Payload vượt giới hạn parser; kích thước body tối đa 100 KiB |
 | 415 | Parser không hỗ trợ encoding/charset của request |
 | 500 | Lỗi nội bộ không dự kiến |

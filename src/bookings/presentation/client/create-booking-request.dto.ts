@@ -1,9 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsISO8601, IsString, IsUUID, Matches, MaxLength, NotContains } from 'class-validator';
+import { IsString, IsUUID, Matches, MaxLength, NotContains } from 'class-validator';
+import { TimeRangeRequestDto } from '../../../common/http/dto/time-range-request.dto';
 import { MAX_BOOKING_TITLE_LENGTH } from '../../application/policies/booking-title.policy';
 
-export class CreateBookingRequestDto {
+export class CreateBookingRequestDto extends TimeRangeRequestDto {
   @ApiProperty({ format: 'uuid' })
   @IsUUID()
   roomId!: string;
@@ -17,16 +18,4 @@ export class CreateBookingRequestDto {
   @MaxLength(MAX_BOOKING_TITLE_LENGTH)
   @NotContains('\0')
   title!: string;
-
-  @ApiProperty({ format: 'date-time', example: '2099-01-01T10:00:00Z' })
-  @IsString()
-  @IsISO8601({ strict: true })
-  @Matches(/T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/)
-  startAt!: string;
-
-  @ApiProperty({ format: 'date-time', example: '2099-01-01T11:00:00Z' })
-  @IsString()
-  @IsISO8601({ strict: true })
-  @Matches(/T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/)
-  endAt!: string;
 }

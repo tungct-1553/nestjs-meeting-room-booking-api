@@ -73,7 +73,7 @@ feature.module → presentation + application + infrastructure
 - Module khác chỉ import `public/` và file Nest module của feature sở hữu dữ liệu. Interface công khai không chứa Nest/HTTP/ORM type hoặc decorator.
 - Identity công bố kiểu thuần tại `public/principal.ts` và decorator HTTP tại `public/http/`. Chỉ presentation được dùng decorator HTTP; application không nhận `Principal` hoặc import các decorator này.
 - Bookings dùng `UsersQueryApi` qua token công khai; không inject toàn bộ `UsersService` có cả quyền sync. Users service triển khai interface này, không cần một lớp facade chuyển tiếp.
-- Ngoại lệ tích hợp duy nhất: infrastructure của Bookings được dùng `rooms/infrastructure/public/rooms-transaction.factory.ts` để bind cùng `EntityManager`. Factory được RoomsModule export; application vẫn chỉ thấy `RoomsBookingAccess`. Không import entity/repository Rooms từ Bookings.
+- Ngoại lệ duy nhất cho quy tắc import giữa các feature là infrastructure của Bookings dùng `rooms/infrastructure/public/rooms-transaction.factory.ts` để bind cùng `EntityManager`. Factory được RoomsModule export, application làm việc qua `RoomsBookingAccess`.
 - Không tạo vòng phụ thuộc module hoặc dùng `forwardRef()` để che vòng phụ thuộc.
 - `common/application/` chứa error contract thuần; `common/validation/` chứa validator thuần dùng ở nhiều module; `common/http/` chứa thành phần HTTP dùng chung. `common` không import feature.
 - Composition root được import feature để lắp ứng dụng; không chứa danh sách DTO hoặc hard-code mã lỗi nghiệp vụ để bù metadata thiếu ở feature.

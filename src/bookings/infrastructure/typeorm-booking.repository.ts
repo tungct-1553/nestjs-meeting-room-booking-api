@@ -1,4 +1,5 @@
 import type { EntityManager } from 'typeorm';
+import type { TimeRange } from '../../common/validation/time-range';
 import type {
   BookingRepositoryPort,
   InsertBookingInput,
@@ -29,6 +30,23 @@ export class TypeormBookingRepository implements BookingRepositoryPort {
     this.assertActiveTransaction();
     const repository = this.manager.getRepository(BookingEntity);
     await repository.update(id, { status });
+    return toBooking(await repository.findOneByOrFail({ id }));
+  }
+
+  async updateSchedule(id: string, { startAt, endAt }: TimeRange): Promise<Booking> {
+    this.assertActiveTransaction();
+    const repository = this.manager.getRepository(BookingEntity);
+    // Compare at PostgreSQL precision so a sub-millisecond interval can still be corrected.
+    await repository
+      .createQueryBuilder()
+      .update()
+      .set({ startAt, endAt })
+      .where('id = :id', { id })
+      .andWhere(
+        '(start_at, end_at) IS DISTINCT FROM (CAST(:startAt AS timestamptz), CAST(:endAt AS timestamptz))',
+        { startAt, endAt },
+      )
+      .execute();
     return toBooking(await repository.findOneByOrFail({ id }));
   }
 
