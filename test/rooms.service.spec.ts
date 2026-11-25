@@ -14,7 +14,9 @@ const uow: RoomsUnitOfWork = {
 const creator = { create: jest.fn() };
 const reader = {
   listActive: jest.fn(),
+  listForAdmin: jest.fn(),
   findActiveById: jest.fn(),
+  findById: jest.fn(),
   findActiveRoomBusyIntervals: jest.fn(),
 };
 const service = new RoomsService(uow, creator, reader);
@@ -154,8 +156,31 @@ describe('Rooms update use case', () => {
   });
 });
 
-describe('Rooms deactivate use case', () => {
+describe('Room status use cases', () => {
   beforeEach(() => jest.resetAllMocks());
+
+  it.each([true, false])(
+    'returns the room after setting isActive=%s under its lock',
+    async (isActive) => {
+      const result = { id: 'room-id', name: 'A', capacity: 10, description: null, isActive };
+      lockById.mockResolvedValue({ id: 'room-id', isActive: !isActive });
+      setActive.mockResolvedValue(result);
+      await expect(service.setStatus('room-id', isActive)).resolves.toBe(result);
+      expect(lockById).toHaveBeenCalledWith('room-id');
+      expect(setActive).toHaveBeenCalledWith('room-id', isActive);
+      expect(lockById.mock.invocationCallOrder[0]).toBeLessThan(
+        setActive.mock.invocationCallOrder[0],
+      );
+    },
+  );
+
+  it('rejects invalid room status before locking', async () => {
+    await expect(service.setStatus('room-id', 'false' as never)).rejects.toBeInstanceOf(
+      InvalidRoomInputError,
+    );
+    expect(lockById).not.toHaveBeenCalled();
+    expect(setActive).not.toHaveBeenCalled();
+  });
 
   it('decides not-found in application and performs no update', async () => {
     lockById.mockResolvedValue(null);
@@ -183,6 +208,41 @@ describe('Rooms deactivate use case', () => {
 
 describe('Rooms read use cases', () => {
   beforeEach(() => jest.resetAllMocks());
+
+  it.each([undefined, true, false])(
+    'passes Admin room filter %s with normalized pagination and search',
+    async (isActive) => {
+      const result = { items: [], page: 2, limit: 5, total: 9 };
+      reader.listForAdmin.mockResolvedValue(result);
+      await expect(
+        service.listForAdmin(
+          { page: 2, limit: 5, capacity: 10, search: ' PHÒNG '.normalize('NFD') },
+          isActive,
+        ),
+      ).resolves.toBe(result);
+      expect(reader.listForAdmin).toHaveBeenCalledWith(
+        { page: 2, limit: 5, capacity: 10, search: 'PHÒNG' },
+        isActive,
+      );
+    },
+  );
+
+  it('rejects invalid Admin list input before reading', () => {
+    expect(() => service.listForAdmin({ page: 0, limit: 20 })).toThrow(InvalidRoomInputError);
+    expect(() => service.listForAdmin({ page: 1, limit: 20 }, null as never)).toThrow(
+      InvalidRoomInputError,
+    );
+    expect(reader.listForAdmin).not.toHaveBeenCalled();
+  });
+
+  it('returns an inactive room to Admin and reports a missing room in application', async () => {
+    const result = { id: 'room-id', name: 'A', capacity: 1, description: null, isActive: false };
+    reader.findById.mockResolvedValueOnce(result).mockResolvedValueOnce(null);
+    await expect(service.detailForAdmin('room-id')).resolves.toBe(result);
+    expect(reader.findById).toHaveBeenCalledWith('room-id');
+    await expect(service.detailForAdmin('missing')).rejects.toBeInstanceOf(RoomNotFoundError);
+    expect(lockById).not.toHaveBeenCalled();
+  });
 
   it('normalizes list input and delegates active filtering through the read port', async () => {
     const result = { items: [], page: 2, limit: 5, total: 8 };

@@ -22,11 +22,11 @@ Access token đã xác minh cung cấp Keycloak `sub`. Users đồng bộ hồ s
 ### Phòng
 
 - Chỉ phòng active được hiển thị qua Client API và nhận booking mới.
-- Admin tạo, sửa và ngừng hoạt động phòng; ngừng hoạt động bằng `isActive = false`, không xóa cứng lịch sử.
-- Booking đã tồn tại được giữ khi phòng chuyển inactive.
+- Admin tạo, sửa, tra cứu, ngừng hoạt động và kích hoạt lại phòng. Ngừng hoạt động đặt `isActive = false`.
+- Thay đổi trạng thái phòng giữ nguyên lịch sử booking. Khi phòng được kích hoạt lại, booking `confirmed` hiện có vẫn giữ giờ đã đặt.
 - Tên phòng được trim hai đầu và chuẩn hóa NFC trước khi kiểm tra độ dài 1–200 Unicode code point. Tên duy nhất không phân biệt hoa/thường; giữ hoa/thường và dấu để hiển thị. NFC/NFD tương đương được coi là cùng tên; dấu khác nhau vẫn phân biệt. Tên và mô tả không chứa NUL (`\u0000`).
 - Capacity nhận JSON number nguyên từ 1 đến 2147483647. Description nhận string hoặc null; không gửi khi tạo được lưu null.
-- PATCH phải có ít nhất một field được sửa. Field không gửi giữ nguyên; `description: null` xóa mô tả; `name`/`capacity` không nhận null. Admin được sửa thông tin phòng inactive; PATCH không nhận `isActive`.
+- PATCH thông tin phòng phải có ít nhất một field được sửa. Field không gửi giữ nguyên; `description: null` xóa mô tả; `name`/`capacity` không nhận null. Admin được sửa thông tin phòng inactive. Trạng thái `isActive` được cập nhật qua endpoint `/status`.
 
 ### Booking
 
@@ -58,7 +58,7 @@ Response JSON, field ngày giờ serialize ISO 8601 UTC. Quy ước envelope:
 
 | Danh sách | Filter ngoài `page`/`limit` | Thứ tự |
 |---|---|---|
-| Phòng | `capacity`: số nguyên 1–2147483647, sức chứa tối thiểu; `search`: tìm chuỗi con theo tên | `name ASC, id ASC` |
+| Phòng | `capacity`: số nguyên 1–2147483647, sức chứa tối thiểu; `search`: tìm chuỗi con theo tên; `isActive`: chỉ Admin nhận `true` hoặc `false`, mặc định cả hai trạng thái | `name ASC, id ASC` |
 | Booking cá nhân | `status`: `confirmed` hoặc `cancelled` | `created_at DESC, id DESC` |
 
 Search phòng được trim/NFC trước validation, tối đa 200 Unicode code point và không chứa NUL. Chuỗi rỗng bỏ filter. Tìm không phân biệt hoa/thường theo Unicode simple-case mapping `pg_c_utf8`, phân biệt dấu; `%`, `_` và `\` là ký tự literal. List phòng và total dùng cùng database snapshot.
@@ -89,11 +89,14 @@ Sync lấy `sub`, email/display name và `iat` từ token đã xác minh. Reques
 | GET | `/client/rooms/available` | Employee/Admin | `startAt`, `endAt` và query phân trang/filter phòng | 200 list `Room` active trống suốt khoảng yêu cầu |
 | GET | `/client/rooms/:id` | Employee/Admin | UUID phòng | 200 `Room`; 404 nếu không tồn tại/inactive |
 | GET | `/client/rooms/:id/availability` | Employee/Admin | UUID phòng, query `startAt`, `endAt` | 200 `{ roomId, availableIntervals: [{ startAt, endAt }] }`; 404 nếu không tồn tại/inactive |
+| GET | `/admin/rooms` | Admin | Query phân trang/filter phòng, gồm `isActive` tùy chọn | 200 list `Room` |
+| GET | `/admin/rooms/:id` | Admin | UUID phòng | 200 `Room` ở cả hai trạng thái; 404 nếu không tồn tại |
 | POST | `/admin/rooms` | Admin | `name`, `capacity`, `description?` | 201 `Room`; 400 nếu invalid; 409 nếu trùng tên |
 | PATCH | `/admin/rooms/:id` | Admin | `name?`, `capacity?`, `description?` | 200 `Room`; 400 nếu UUID/body invalid; 404 nếu không tồn tại; 409 nếu trùng tên |
+| PATCH | `/admin/rooms/:id/status` | Admin | UUID phòng, JSON `{ "isActive": boolean }` | 200 `Room`; 400 nếu UUID/body invalid; 404 nếu không tồn tại |
 | DELETE | `/admin/rooms/:id` | Admin | UUID phòng | 204; 404 nếu không tồn tại |
 
-`DELETE` ngừng hoạt động phòng. Phòng đã inactive vẫn hoàn tất thao tác với 204.
+`DELETE` ngừng hoạt động phòng và trả 204 cả khi phòng đã inactive. PATCH trạng thái trả thông tin phòng hiện tại nếu `isActive` đã có đúng giá trị yêu cầu.
 
 Hai endpoint tra cứu giờ trống nhận khoảng ISO 8601 có timezone. API cắt phần giây lẻ sau ba chữ số trước khi kiểm tra `now < startAt < endAt` và truy vấn. Chỉ booking `confirmed` chiếm chỗ trong khoảng `[startAt, endAt)`. `availableIntervals` sắp tăng dần theo giờ bắt đầu và nằm trong khoảng đã chuẩn hóa. Phòng trống hoàn toàn trả một khoảng, phòng kín lịch trả mảng rỗng.
 
@@ -169,6 +172,7 @@ Role claim thiếu/sai cấu trúc được chuẩn hóa thành danh sách rỗn
 - Admin sử dụng được Client API và quản lý phòng, vẫn chịu kiểm tra owner khi xem/hủy booking.
 - Hai request đồng thời cho cùng phòng/khoảng giờ chỉ tối đa một request tạo thành công.
 - Khoảng giờ liền nhau hợp lệ; hủy booking giải phóng lịch; ngừng hoạt động phòng giữ lịch sử.
+- Admin tra cứu được phòng inactive và kích hoạt lại phòng để nhận booking mới. Lịch `confirmed` cũ vẫn được bảo vệ khỏi trùng giờ.
 - Hồ sơ đồng bộ theo `sub` có UUID ổn định; API không trả thông tin nhạy cảm.
 - Response đúng envelope, nullability, thứ tự và giới hạn phân trang của contract.
 

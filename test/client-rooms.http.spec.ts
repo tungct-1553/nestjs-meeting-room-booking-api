@@ -201,6 +201,7 @@ it('publishes correct query, response, security and namespace Swagger', async ()
   expect(params.page).toMatchObject({ minimum: 1, default: 1 });
   expect(params.limit).toMatchObject({ maximum: 100, default: 20 });
   expect(params.capacity).toMatchObject({ maximum: 2147483647 });
+  expect(params.isActive).toBeUndefined();
   expect(client.paths['/api/v1/client/rooms/{id}'].get.responses['404']).toBeDefined();
   expect(client.paths['/api/v1/admin/rooms/{id}']).toBeUndefined();
   const adminDoc = (
@@ -208,12 +209,14 @@ it('publishes correct query, response, security and namespace Swagger', async ()
   ).body;
   expect(
     Object.keys(adminDoc.paths).filter((path) => path.startsWith('/api/v1/admin/rooms')),
-  ).toEqual(['/api/v1/admin/rooms', '/api/v1/admin/rooms/{id}']);
-  expect(Object.keys(adminDoc.paths['/api/v1/admin/rooms'])).toEqual(['post']);
+  ).toEqual(['/api/v1/admin/rooms', '/api/v1/admin/rooms/{id}', '/api/v1/admin/rooms/{id}/status']);
+  expect(Object.keys(adminDoc.paths['/api/v1/admin/rooms']).sort()).toEqual(['get', 'post']);
   expect(Object.keys(adminDoc.paths['/api/v1/admin/rooms/{id}']).sort()).toEqual([
     'delete',
+    'get',
     'patch',
   ]);
+  expect(Object.keys(adminDoc.paths['/api/v1/admin/rooms/{id}/status'])).toEqual(['patch']);
   const deletion = adminDoc.paths['/api/v1/admin/rooms/{id}'].delete;
   expect(deletion.responses['204'].content).toBeUndefined();
   expect(deletion.responses['200']).toBeUndefined();
