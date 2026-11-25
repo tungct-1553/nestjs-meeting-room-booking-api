@@ -167,6 +167,8 @@ HTTP request
 
 Keycloak sở hữu đăng ký, đăng nhập, password và refresh token. Hai OAuth client Client/Admin dùng Authorization Code + PKCE và cùng API audience. API xác minh access token offline đến khi hết hạn; role lấy từ `resource_access[API_CLIENT_ID].roles`. Admin được phép dùng Client API; quyền Admin API yêu cầu role Admin.
 
+`IdentityModule` là dynamic module nhận issuer và API client ID. `AppModule` gọi `IdentityModule.registerAsync()` để lấy các giá trị đã validate từ `ConfigService`. `JwtStrategy` inject options qua DI token của module. `IdentityModule.register()` nhận options trực tiếp khi dùng module độc lập.
+
 `JwtAuthGuard` và `RolesGuard` đăng ký toàn cục, authentication chạy trước authorization. `@Public()` bỏ qua cả hai; health và Swagger public. Thiếu/sai token trả 401, thiếu role trả 403; không lấy được JWKS và không có key cache khả dụng trả 503.
 
 Bootstrap tắt parser mặc định của Nest bằng `bodyParser: false`; `configureApp` sở hữu pipeline parser. CORS được gắn trực tiếp qua HTTP adapter trước parser để response lỗi parse vẫn có CORS header cho origin được phép.

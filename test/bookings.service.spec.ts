@@ -1,7 +1,13 @@
+import { Test } from '@nestjs/testing';
+import type { TestingModule } from '@nestjs/testing';
 import { BookingsService } from '../src/bookings/application/bookings.service';
+import { BOOKING_READ_REPOSITORY } from '../src/bookings/application/ports/booking-read-repository.port';
+import { BOOKING_UNIT_OF_WORK } from '../src/bookings/application/ports/booking-unit-of-work.port';
 import type { BookingUnitOfWork } from '../src/bookings/application/ports/booking-unit-of-work.port';
+import { USERS_QUERY_API } from '../src/users/public/users-query.api';
 import {
   BookingNotFoundError,
+  BookingNotReschedulableError,
   BookingOwnerRequiredError,
   InvalidBookingInputError,
   InvalidBookingTimeError,
@@ -35,7 +41,23 @@ describe('BookingsService', () => {
         bookings: { insert, lockById, updateStatus, updateSchedule },
       }),
   };
-  const service = new BookingsService(users, uow, reader);
+  let moduleRef: TestingModule;
+  let service: BookingsService;
+
+  beforeAll(async () => {
+    moduleRef = await Test.createTestingModule({
+      providers: [
+        BookingsService,
+        { provide: USERS_QUERY_API, useValue: users },
+        { provide: BOOKING_UNIT_OF_WORK, useValue: uow },
+        { provide: BOOKING_READ_REPOSITORY, useValue: reader },
+      ],
+    }).compile();
+    service = moduleRef.get(BookingsService);
+  });
+
+  afterAll(() => moduleRef?.close());
+
   beforeEach(() => {
     jest.clearAllMocks();
     lockForBooking.mockResolvedValue({ id: 'room-id', isActive: true });
@@ -111,6 +133,44 @@ describe('BookingsService', () => {
   it('accepts the Unicode code point title limit', async () => {
     await service.create({ ...input, title: '😀'.repeat(200) });
     expect(insert).toHaveBeenCalledWith(expect.objectContaining({ title: '😀'.repeat(200) }));
+  });
+
+  describe('reschedule', () => {
+    const booking = { ...input, id: 'booking-id', userId: 'local-user', status: 'confirmed' };
+    const schedule = {
+      startAt: new Date('2099-01-01T11:00:00Z'),
+      endAt: new Date('2099-01-01T12:00:00Z'),
+    };
+    const request = { actorSub: input.actorSub, bookingId: booking.id, ...schedule };
+
+    it('locks room then booking and writes only the new schedule', async () => {
+      const updated = { ...booking, ...schedule };
+      reader.findById.mockResolvedValueOnce(booking);
+      lockById.mockResolvedValueOnce(booking);
+      updateSchedule.mockResolvedValueOnce(updated);
+
+      await expect(service.reschedule(request)).resolves.toBe(updated);
+      expect(lockForBooking).toHaveBeenCalledWith(booking.roomId);
+      expect(lockById).toHaveBeenCalledWith(booking.id);
+      expect(updateSchedule).toHaveBeenCalledWith(booking.id, schedule);
+      expect(lockForBooking.mock.invocationCallOrder[0]).toBeLessThan(
+        lockById.mock.invocationCallOrder[0],
+      );
+      expect(lockById.mock.invocationCallOrder[0]).toBeLessThan(
+        updateSchedule.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('rejects a cancellation committed between the read and the booking lock', async () => {
+      reader.findById.mockResolvedValueOnce(booking);
+      lockById.mockResolvedValueOnce({ ...booking, status: 'cancelled' });
+
+      await expect(service.reschedule(request)).rejects.toBeInstanceOf(
+        BookingNotReschedulableError,
+      );
+      expect(lockById).toHaveBeenCalledWith(booking.id);
+      expect(updateSchedule).not.toHaveBeenCalled();
+    });
   });
 
   it('locks the booking and selects cancelled status only after checking its owner', async () => {
