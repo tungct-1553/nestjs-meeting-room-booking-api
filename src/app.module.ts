@@ -1,5 +1,5 @@
 import { Module } from '@nestjs/common';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { validateEnvironment } from './config/env.validation';
 import { DatabaseModule } from './database/database.module';
 import { HealthModule } from './health/health.module';
@@ -12,7 +12,13 @@ import { BookingsModule } from './bookings/bookings.module';
   imports: [
     ConfigModule.forRoot({ isGlobal: true, validate: validateEnvironment }),
     DatabaseModule,
-    IdentityModule,
+    IdentityModule.registerAsync({
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        issuer: config.getOrThrow<string>('KEYCLOAK_ISSUER'),
+        apiClientId: config.getOrThrow<string>('API_CLIENT_ID'),
+      }),
+    }),
     UsersModule,
     RoomsModule,
     BookingsModule,

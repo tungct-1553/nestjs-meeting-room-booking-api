@@ -1,8 +1,13 @@
+import { Test } from '@nestjs/testing';
+import type { TestingModule } from '@nestjs/testing';
 import { RoomsService } from '../src/rooms/application/rooms.service';
 import { RoomNotFoundError } from '../src/rooms/application/errors/room.errors';
 import { InvalidRoomInputError } from '../src/rooms/application/errors/room.errors';
 import type { CreateRoomInput } from '../src/rooms/application/inputs/create-room.input';
 import type { UpdateRoomInput } from '../src/rooms/application/inputs/update-room.input';
+import { ROOM_CREATION_REPOSITORY } from '../src/rooms/application/ports/room-creation-repository.port';
+import { ROOM_READ_REPOSITORY } from '../src/rooms/application/ports/room-read-repository.port';
+import { ROOMS_UNIT_OF_WORK } from '../src/rooms/application/ports/rooms-unit-of-work.port';
 import type { RoomsUnitOfWork } from '../src/rooms/application/ports/rooms-unit-of-work.port';
 
 const lockById = jest.fn();
@@ -19,11 +24,26 @@ const reader = {
   findById: jest.fn(),
   findActiveRoomBusyIntervals: jest.fn(),
 };
-const service = new RoomsService(uow, creator, reader);
+let moduleRef: TestingModule;
+let service: RoomsService;
+
+beforeAll(async () => {
+  moduleRef = await Test.createTestingModule({
+    providers: [
+      RoomsService,
+      { provide: ROOMS_UNIT_OF_WORK, useValue: uow },
+      { provide: ROOM_CREATION_REPOSITORY, useValue: creator },
+      { provide: ROOM_READ_REPOSITORY, useValue: reader },
+    ],
+  }).compile();
+  service = moduleRef.get(RoomsService);
+});
+
+beforeEach(() => jest.resetAllMocks());
+
+afterAll(() => moduleRef?.close());
 
 describe('Rooms create use case', () => {
-  beforeEach(() => jest.resetAllMocks());
-
   it('normalizes name and chooses active/default description before persistence', async () => {
     const result = { id: 'room-id', name: 'A', capacity: 10, description: null, isActive: true };
     creator.create.mockResolvedValue(result);
@@ -92,8 +112,6 @@ describe('Rooms create use case', () => {
 });
 
 describe('Rooms update use case', () => {
-  beforeEach(() => jest.resetAllMocks());
-
   it('locks before updating only supplied details, including for inactive rooms', async () => {
     lockById.mockResolvedValue({ id: 'room-id', isActive: false });
     const result = { id: 'room-id', name: 'A', capacity: 10, description: null, isActive: false };
@@ -157,8 +175,6 @@ describe('Rooms update use case', () => {
 });
 
 describe('Room status use cases', () => {
-  beforeEach(() => jest.resetAllMocks());
-
   it.each([true, false])(
     'returns the room after setting isActive=%s under its lock',
     async (isActive) => {
@@ -207,8 +223,6 @@ describe('Room status use cases', () => {
 });
 
 describe('Rooms read use cases', () => {
-  beforeEach(() => jest.resetAllMocks());
-
   it.each([undefined, true, false])(
     'passes Admin room filter %s with normalized pagination and search',
     async (isActive) => {

@@ -1,5 +1,11 @@
+import { Test } from '@nestjs/testing';
+import type { TestingModule } from '@nestjs/testing';
 import type { DataSource } from 'typeorm';
 import { QueryFailedError } from 'typeorm';
+import {
+  USER_READ_REPOSITORY,
+  USER_SYNC_REPOSITORY,
+} from '../src/users/application/ports/user-repository.port';
 import { UsersService } from '../src/users/application/users.service';
 import { TypeormUserRepository } from '../src/users/infrastructure/typeorm-user.repository';
 import {
@@ -12,7 +18,22 @@ const principal = { sub: 'subject', email: null, displayName: null, roles: ['emp
 describe('User provisioning boundaries', () => {
   const reader = { findBySub: jest.fn() };
   const writer = { upsertIfNewer: jest.fn() };
-  const service = new UsersService(reader, writer);
+  let moduleRef: TestingModule;
+  let service: UsersService;
+
+  beforeAll(async () => {
+    moduleRef = await Test.createTestingModule({
+      providers: [
+        UsersService,
+        { provide: USER_READ_REPOSITORY, useValue: reader },
+        { provide: USER_SYNC_REPOSITORY, useValue: writer },
+      ],
+    }).compile();
+    service = moduleRef.get(UsersService);
+  });
+
+  afterAll(() => moduleRef?.close());
+
   beforeEach(() => jest.clearAllMocks());
   it('requires explicit provisioning and never writes from read lookup', async () => {
     reader.findBySub.mockResolvedValue(null);

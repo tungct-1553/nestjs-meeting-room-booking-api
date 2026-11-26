@@ -1,10 +1,16 @@
-import { Injectable, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
+import {
+  Inject,
+  Injectable,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { decode } from 'jsonwebtoken';
 import { JwksClient } from 'jwks-rsa';
 import { isValidNumericDate } from '../common/validation/numeric-date';
+import { IDENTITY_OPTIONS } from './identity.module-definition';
+import type { IdentityOptions } from './identity.module-definition';
 import type { Principal, Role } from './public/principal';
 
 interface AccessTokenClaims extends Record<string, unknown> {
@@ -61,9 +67,8 @@ function optionalText(value: unknown): string | null {
 export class JwtStrategy extends PassportStrategy(Strategy) {
   private readonly clientId: string;
 
-  constructor(config: ConfigService) {
-    const issuer = config.getOrThrow<string>('KEYCLOAK_ISSUER');
-    const clientId = config.getOrThrow<string>('API_CLIENT_ID');
+  constructor(@Inject(IDENTITY_OPTIONS) options: IdentityOptions) {
+    const { issuer, apiClientId: clientId } = options;
     const keys = new JwksClient({
       jwksUri: `${issuer}/protocol/openid-connect/certs`,
       cache: true,
