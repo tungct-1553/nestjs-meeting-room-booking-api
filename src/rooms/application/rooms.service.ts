@@ -5,7 +5,7 @@ import type { RoomPage } from './models/room-page';
 import { ROOM_READ_REPOSITORY } from './ports/room-read-repository.port';
 import type { RoomReadRepositoryPort } from './ports/room-read-repository.port';
 import { normalizeRoomList } from './policies/room-list.policy';
-import { RoomNotFoundError } from './errors/room.errors';
+import { InvalidRoomInputError, RoomNotFoundError } from './errors/room.errors';
 import { ROOMS_UNIT_OF_WORK } from './ports/rooms-unit-of-work.port';
 import type { RoomsUnitOfWork } from './ports/rooms-unit-of-work.port';
 import { ROOM_CREATION_REPOSITORY } from './ports/room-creation-repository.port';
@@ -31,6 +31,13 @@ export class RoomsService {
     return this.reader.listActive(normalizeRoomList(input));
   }
 
+  listForAdmin(input: ListRoomsInput, isActive?: boolean): Promise<RoomPage> {
+    if (isActive !== undefined && typeof isActive !== 'boolean') {
+      throw new InvalidRoomInputError('Room status filter must be a boolean');
+    }
+    return this.reader.listForAdmin(normalizeRoomList(input), isActive);
+  }
+
   listAvailable(input: ListRoomsInput, range: TimeRange): Promise<RoomPage> {
     validateAvailabilityRange(range);
     return this.reader.listActive(normalizeRoomList(input), range);
@@ -53,6 +60,14 @@ export class RoomsService {
     return room;
   }
 
+  async detailForAdmin(roomId: string): Promise<Room> {
+    const room = await this.reader.findById(roomId);
+    if (room === null) {
+      throw new RoomNotFoundError();
+    }
+    return room;
+  }
+
   create(input: CreateRoomInput): Promise<Room> {
     return this.creator.create(normalizeCreateRoom(input));
   }
@@ -69,12 +84,19 @@ export class RoomsService {
   }
 
   async deactivate(roomId: string): Promise<void> {
-    await this.uow.run(async ({ rooms }) => {
+    await this.setStatus(roomId, false);
+  }
+
+  async setStatus(roomId: string, isActive: boolean): Promise<Room> {
+    if (typeof isActive !== 'boolean') {
+      throw new InvalidRoomInputError('Room status must be a boolean');
+    }
+    return this.uow.run(async ({ rooms }) => {
       const room = await rooms.lockById(roomId);
       if (room === null) {
         throw new RoomNotFoundError();
       }
-      await rooms.setActive(room.id, false);
+      return rooms.setActive(room.id, isActive);
     });
   }
 }

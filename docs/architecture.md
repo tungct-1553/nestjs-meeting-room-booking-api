@@ -71,7 +71,7 @@ Service là điểm vào use case; entity là mapping persistence. Application n
 
 `ClientUsersController` và `AdminUsersController` có routing, role policy và response DTO riêng, và cùng đọc qua `UsersService.requireBySub`. Chỉ Client cung cấp `POST /users/sync` để khởi tạo/đồng bộ hồ sơ; Admin được cấp hồ sơ qua CLI. Việc thay đổi contract HTTP của một nhóm không yêu cầu tạo bản sao service hoặc repository.
 
-`AdminRoomsController` cung cấp POST/PATCH quản lý phòng với role Admin. Controller validate/map DTO sang input thuần; Rooms service quyết định trạng thái phòng mới, invariant và lỗi thiếu phòng. Model phản hồi chỉ chứa field công bố trong API contract. Các API Client đọc phòng và HTTP deactivate chưa được triển khai.
+`AdminRoomsController` sử dụng role Admin cho tra cứu phòng theo trạng thái, tạo, sửa, ngừng hoạt động và kích hoạt lại phòng. Controller validate/map DTO sang input thuần, Rooms service điều phối nghiệp vụ. Client đọc và tra cứu giờ trống của phòng active.
 
 Role được kiểm tra ở guard trước khi gọi controller. Quy tắc dữ liệu thuộc use case: ví dụ lấy UUID user qua Users service và kiểm tra trạng thái phòng trong transaction booking. Controller không tự truy vấn database hoặc mở transaction. Quyền HTTP không được suy ra từ tên OAuth client; Employee/Admin được xác định từ role trong principal.
 
@@ -128,7 +128,7 @@ BookingsService.create
 
 Lookup user trước transaction chỉ đọc UUID đã tồn tại; thiếu hồ sơ ném `UserNotProvisionedError` (409) trước khi mở transaction booking. User được khởi tạo qua sync hoặc CLI. UUID ổn định và FK `ON DELETE RESTRICT` duy trì liên kết booking; transaction booking không cập nhật profile. Input booking chứa `Date`, không chứa request DTO; adapter HTTP/CLI chịu trách nhiệm parse dữ liệu đầu vào.
 
-`RoomsService.deactivate` cũng điều phối UoW: lấy phòng có khóa, ném `RoomNotFoundError` nếu không tồn tại, rồi yêu cầu `setActive(id, false)`. Repository chỉ đọc/ghi trạng thái bằng manager được bind. Phòng đã inactive vẫn được xử lý thành công; deactivate không hủy booking đã có.
+`RoomsService.setStatus` khóa dòng phòng trong UoW, báo `RoomNotFoundError` nếu thiếu phòng, rồi yêu cầu repository cập nhật trạng thái. Repository dùng manager được bind và chỉ ghi khi trạng thái thay đổi. `deactivate` dùng chung luồng với `isActive = false`. Booking đã có được giữ qua các trạng thái phòng.
 
 Create phòng dùng `RoomCreationRepositoryPort` cho một insert nguyên tử; application đặt `isActive = true`. Update dùng Rooms UoW, khóa row bằng cùng protocol của deactivate/booking, rồi chỉ cập nhật field có trong patch. Field không gửi giữ nguyên; `description: null` xóa mô tả; sửa phòng inactive không kích hoạt lại phòng. DTO và application dùng chung formatter trim/NFC trước kiểm tra độ dài. Unique expression index `rooms_name_key` bảo vệ tên theo NFC và không phân biệt hoa/thường; adapter chỉ map đúng index này sang `RoomNameConflictError` (409), không dùng SELECT kiểm tra trước làm bảo đảm duy nhất.
 

@@ -2,12 +2,14 @@ import {
   Body,
   Delete,
   Controller,
+  Get,
   HttpCode,
   HttpStatus,
   Param,
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -18,16 +20,21 @@ import {
   ApiNotFoundResponse,
   ApiNoContentResponse,
   ApiOAuth2,
+  ApiOkResponse,
   ApiParam,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import { ApiDataResponse } from '../../../common/http/decorators/api-data-response.decorator';
+import { PaginatedResponse } from '../../../common/http/types/paginated-response';
 import { Roles } from '../../../identity/public/http/roles.decorator';
 import { RoomsService } from '../../application/rooms.service';
 import { CreateRoomRequestDto } from './create-room-request.dto';
+import { ListAdminRoomsRequestDto } from './list-admin-rooms-request.dto';
+import { AdminRoomPageResponseDto } from './room-page-response.dto';
 import { AdminRoomResponseDto } from './room-response.dto';
 import { UpdateRoomRequestDto } from './update-room-request.dto';
+import { UpdateRoomStatusRequestDto } from './update-room-status-request.dto';
 
 @ApiTags('Admin Rooms')
 @ApiBearerAuth()
@@ -39,6 +46,30 @@ import { UpdateRoomRequestDto } from './update-room-request.dto';
 @Controller('admin/rooms')
 export class AdminRoomsController {
   constructor(private readonly rooms: RoomsService) {}
+
+  @Get()
+  @ApiOkResponse({ type: AdminRoomPageResponseDto })
+  async list(
+    @Query() dto: ListAdminRoomsRequestDto,
+  ): Promise<PaginatedResponse<AdminRoomResponseDto>> {
+    const result = await this.rooms.listForAdmin(
+      { page: dto.page, limit: dto.limit, capacity: dto.capacity, search: dto.search },
+      dto.isActive,
+    );
+    return new PaginatedResponse(result.items.map(AdminRoomResponseDto.from), {
+      page: result.page,
+      limit: result.limit,
+      total: result.total,
+    });
+  }
+
+  @Get(':id')
+  @ApiParam({ name: 'id', schema: { type: 'string', format: 'uuid' } })
+  @ApiNotFoundResponse({ description: 'Room was not found' })
+  @ApiDataResponse(AdminRoomResponseDto)
+  async detail(@Param('id', new ParseUUIDPipe()) id: string): Promise<AdminRoomResponseDto> {
+    return AdminRoomResponseDto.from(await this.rooms.detailForAdmin(id));
+  }
 
   @Post()
   @ApiConflictResponse({ description: 'Room name is already in use' })
@@ -83,5 +114,16 @@ export class AdminRoomsController {
       description: dto.description,
     });
     return AdminRoomResponseDto.from(room);
+  }
+
+  @Patch(':id/status')
+  @ApiParam({ name: 'id', schema: { type: 'string', format: 'uuid' } })
+  @ApiNotFoundResponse({ description: 'Room was not found' })
+  @ApiDataResponse(AdminRoomResponseDto)
+  async setStatus(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: UpdateRoomStatusRequestDto,
+  ): Promise<AdminRoomResponseDto> {
+    return AdminRoomResponseDto.from(await this.rooms.setStatus(id, dto.isActive));
   }
 }

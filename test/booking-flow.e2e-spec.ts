@@ -534,6 +534,57 @@ it('hides inactive rooms while preserving booking reads and allowing owner cance
   });
 });
 
+it('lets Admin find and reopen a room while preserving existing booking reservations', async () => {
+  const roomId = await createRoom('Meeting A', 12);
+  const otherRoomId = await createRoom('Meeting B', 12);
+  await syncEmployee();
+  const original = await bookRoom(roomId, slot(10, 11));
+  const detail = () => api('get', `/admin/rooms/${roomId}`, adminToken).expect(200);
+  const status = (isActive: boolean) =>
+    api('patch', `/admin/rooms/${roomId}/status`, adminToken).send({ isActive }).expect(200);
+  const list = (query: object) =>
+    api('get', '/admin/rooms', adminToken).query({ search: 'meeting', capacity: 10, ...query });
+  const booking = (range: ReturnType<typeof slot>) =>
+    api('post', '/client/bookings').send({ roomId, title: 'Follow-up', ...range });
+
+  const activeRoom = (await detail()).body.data;
+  const inactiveRoom = { ...activeRoom, isActive: false };
+  expect((await status(false)).body).toEqual({ data: inactiveRoom });
+  expect((await detail()).body).toEqual({ data: inactiveRoom });
+  expect((await list({ limit: 1 }).expect(200)).body).toEqual({
+    data: [inactiveRoom],
+    meta: { page: 1, limit: 1, total: 2 },
+  });
+  expect((await list({ isActive: false }).expect(200)).body).toEqual({
+    data: [inactiveRoom],
+    meta: { page: 1, limit: 20, total: 1 },
+  });
+  expect((await list({ isActive: true }).expect(200)).body.data).toMatchObject([
+    { id: otherRoomId },
+  ]);
+  await api('get', `/client/rooms/${roomId}`).expect(404);
+  expect((await booking(slot(11, 12)).expect(404)).body.error.code).toBe('ROOM_UNAVAILABLE');
+
+  expect((await status(true)).body).toEqual({ data: activeRoom });
+  const readUpdatedAt = async () =>
+    (
+      await source.query<{ updated_at: string }[]>(
+        'SELECT updated_at::text FROM rooms WHERE id = $1',
+        [roomId],
+      )
+    )[0].updated_at;
+  const updatedAt = await readUpdatedAt();
+  expect((await status(true)).body).toEqual({ data: activeRoom });
+  expect(await readUpdatedAt()).toBe(updatedAt);
+  expect((await list({ isActive: false }).expect(200)).body.meta.total).toBe(0);
+  expect((await api('get', `/client/rooms/${roomId}`).expect(200)).body.data).toEqual(activeRoom);
+  expect((await api('get', `/client/bookings/${original.id}`).expect(200)).body.data).toEqual(
+    original,
+  );
+  expect((await booking(slot(10, 11)).expect(409)).body.error.code).toBe('BOOKING_TIME_CONFLICT');
+  await booking(slot(11, 12)).expect(201);
+});
+
 it('accepts only one concurrent booking for the same slot and allows an adjacent slot', async () => {
   const roomId = await createRoom();
   await syncEmployee();
