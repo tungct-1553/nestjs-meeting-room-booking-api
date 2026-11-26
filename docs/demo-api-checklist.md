@@ -1,10 +1,10 @@
 # Demo đặt phòng họp và checklist API
 
-**Demo chính đã đủ API.** Nhánh `feat/room-availability-booking-reschedule` có 17 endpoint theo hợp đồng hiện tại, gồm hai API đọc booking của PR #8 và ba API tra cứu giờ trống, đổi lịch của PR #9. Ba endpoint Admin đề xuất phục vụ demo mở lại phòng đã ngừng hoạt động. [API contract](requirements.md)
+**`master` có đủ 20 endpoint** cho demo đặt phòng và vòng đời phòng Admin. Ba API tra cứu và đổi trạng thái phòng đã được merge trong PR #11. [API contract](requirements.md)
 
 ## Chuẩn bị
 
-1. Chạy PostgreSQL, Keycloak, migrations và API từ nhánh chứa PR #9. [Hướng dẫn chạy local](../README.md#chạy-local)
+1. Chạy PostgreSQL, Keycloak, migrations và API từ `master`. [Hướng dẫn chạy local](../README.md#chạy-local)
 2. Mở [Admin Swagger](http://localhost:3000/api/v1/docs/admin) với `admin@example.test` và [Client Swagger](http://localhost:3000/api/v1/docs/client) với `employee@example.test`. Dùng hai phiên trình duyệt riêng để tách phiên đăng nhập Keycloak. Password lấy từ `.env`.
 3. Gọi `GET /api/v1/health/ready` và kiểm tra `200 { "status": "ok" }`.
 
@@ -28,7 +28,17 @@ Thời lượng 5–7 phút. Tất cả endpoint trong bảng có prefix `/api/v
 
 **Kiểm tra rollback khi cần demo thêm.** Sau bước 4, tạo booking thứ hai ở khung B, rồi thử đổi booking đầu sang B. PATCH trả `409 BOOKING_TIME_CONFLICT`. Gọi GET detail và xác nhận booking đầu vẫn ở A. Hủy booking thứ hai rồi tiếp tục bước 5.
 
-**Kiểm tra ngừng hoạt động phòng khi cần demo thêm.** Sau bước 6, Admin gọi `DELETE /admin/rooms/:id` với `id=roomId` và nhận `204`. Employee gọi `GET /client/rooms/:id` nhận `404`, còn `GET /client/bookings/:id` vẫn trả booking đã hủy.
+## Demo vòng đời phòng Admin
+
+Dùng lại `roomId` và `bookingId` sau bước 6.
+
+| Bước | Vai trò | Endpoint và dữ liệu | Kết quả cần thấy |
+|---:|---|---|---|
+| 1 | Admin | `DELETE /admin/rooms/:id` với `id=roomId` | `204`, phòng chuyển inactive |
+| 2 | Admin | `GET /admin/rooms` với `isActive=false` và `search` bằng tên phòng demo. Gọi `GET /admin/rooms/:id` với `id=roomId` | Cả hai trả `200`. Danh sách có phòng, chi tiết trả `isActive=false` |
+| 3 | Employee | `GET /client/rooms/:id` với `id=roomId` | `404` khi phòng inactive |
+| 4 | Admin | `PATCH /admin/rooms/:id/status` với `id=roomId` và body `{"isActive":true}` | `200`, phòng trả về có `isActive=true` |
+| 5 | Employee | `GET /client/rooms/:id` với `id=roomId`. Gọi `POST /client/bookings` đặt lại khung A với title mới. Đọc booking cũ qua `GET /client/bookings/:id` với `id=bookingId` | Phòng xuất hiện lại, booking mới trả `201`, booking cũ vẫn có `status=cancelled` |
 
 ## Checklist endpoint
 
@@ -41,11 +51,14 @@ Thời lượng 5–7 phút. Tất cả endpoint trong bảng có prefix `/api/v
 | Hồ sơ | `POST /client/users/sync` | Đã triển khai | Bước 2 |
 | Hồ sơ | `GET /client/users/me` | Đã triển khai | |
 | Hồ sơ | `GET /admin/users/me` | Đã triển khai | |
+| Phòng | `GET /admin/rooms` | Đã triển khai · PR #11 | Vòng đời phòng |
+| Phòng | `GET /admin/rooms/:id` | Đã triển khai · PR #11 | Vòng đời phòng |
 | Phòng | `POST /admin/rooms` | Đã triển khai | Bước 1 |
 | Phòng | `PATCH /admin/rooms/:id` | Đã triển khai | |
-| Phòng | `DELETE /admin/rooms/:id` | Đã triển khai | Demo thêm |
+| Phòng | `PATCH /admin/rooms/:id/status` | Đã triển khai · PR #11 | Vòng đời phòng |
+| Phòng | `DELETE /admin/rooms/:id` | Đã triển khai | Vòng đời phòng |
 | Phòng | `GET /client/rooms` | Đã triển khai | |
-| Phòng | `GET /client/rooms/:id` | Đã triển khai | Demo thêm |
+| Phòng | `GET /client/rooms/:id` | Đã triển khai | Vòng đời phòng |
 | Phòng | `GET /client/rooms/available` | Đã triển khai · PR #9 | Bước 2, 5 |
 | Phòng | `GET /client/rooms/:id/availability` | Đã triển khai · PR #9 | Bước 4 |
 | Booking | `POST /client/bookings` | Đã triển khai | Bước 3 |
@@ -53,13 +66,3 @@ Thời lượng 5–7 phút. Tất cả endpoint trong bảng có prefix `/api/v
 | Booking | `GET /client/bookings/:id` | Đã triển khai · PR #8 | Bước 6 |
 | Booking | `PATCH /client/bookings/:id/schedule` | Đã triển khai · PR #9 | Bước 5 |
 | Booking | `DELETE /client/bookings/:id` | Đã triển khai | Bước 6 |
-
-### API cần bổ sung cho demo mở lại phòng
-
-| Endpoint đề xuất | Trạng thái | Tiêu chí demo |
-|---|---|---|
-| `GET /admin/rooms` | Chưa triển khai | Admin lọc `isActive=false` và tìm thấy phòng đã ngừng hoạt động |
-| `GET /admin/rooms/:id` | Chưa triển khai | Admin xem chi tiết phòng inactive |
-| `PATCH /admin/rooms/:id/status` | Chưa triển khai | Admin gửi `{"isActive":true}`, phòng xuất hiện lại trong Client API và nhận booking mới. Lịch sử booking được giữ |
-
-Ưu tiên bàn giao demo chính từ PR #9. Nếu đưa luồng mở lại phòng vào phạm vi ngày 10, dành 6 giờ cho ba API Admin và kiểm thử, 1 giờ cho review. [PR #8](https://github.com/tungct-1553/nestjs-meeting-room-booking-api/pull/8) · [PR #9](https://github.com/tungct-1553/nestjs-meeting-room-booking-api/pull/9)
