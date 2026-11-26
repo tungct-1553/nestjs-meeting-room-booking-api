@@ -1,5 +1,10 @@
+import { Test } from '@nestjs/testing';
+import type { TestingModule } from '@nestjs/testing';
 import { BookingsService } from '../src/bookings/application/bookings.service';
+import { BOOKING_READ_REPOSITORY } from '../src/bookings/application/ports/booking-read-repository.port';
+import { BOOKING_UNIT_OF_WORK } from '../src/bookings/application/ports/booking-unit-of-work.port';
 import type { BookingUnitOfWork } from '../src/bookings/application/ports/booking-unit-of-work.port';
+import { USERS_QUERY_API } from '../src/users/public/users-query.api';
 import {
   BookingNotFoundError,
   BookingOwnerRequiredError,
@@ -9,14 +14,29 @@ import {
 const users = { requireBySub: jest.fn() };
 const reader = { listByUser: jest.fn(), findById: jest.fn() };
 const uow: BookingUnitOfWork = { run: jest.fn() };
-const service = new BookingsService(users, uow, reader);
+let moduleRef: TestingModule;
+let service: BookingsService;
 const query = { actorSub: 'verified-sub', page: 1, limit: 20 };
 const booking = { id: 'booking-id', userId: 'local-user', status: 'confirmed' };
+
+beforeAll(async () => {
+  moduleRef = await Test.createTestingModule({
+    providers: [
+      BookingsService,
+      { provide: USERS_QUERY_API, useValue: users },
+      { provide: BOOKING_UNIT_OF_WORK, useValue: uow },
+      { provide: BOOKING_READ_REPOSITORY, useValue: reader },
+    ],
+  }).compile();
+  service = moduleRef.get(BookingsService);
+});
 
 beforeEach(() => {
   jest.resetAllMocks();
   users.requireBySub.mockResolvedValue({ id: 'local-user' });
 });
+
+afterAll(() => moduleRef?.close());
 
 it('lists using only the UUID resolved from the verified subject', async () => {
   const page = { items: [], page: 2, limit: 5, total: 0 };
